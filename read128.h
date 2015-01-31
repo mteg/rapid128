@@ -31,15 +31,19 @@ struct r128_ctx
   int width, height;
   
   /* min/max code unit width to assume */
-  double min_uwidth, max_uwidth;
+  double min_uwidth, max_uwidth, min_doc_cuw, max_doc_cuw;
   
   /* how far to go with resolution tests */
-  int search_steps;
+  int x_depth1, x_depth2;
+  
+  /* how far to go with line distance in BFS scan */
+  int y_depth1, y_depth2;
 
   struct r128_image *im;
   struct r128_image *im_blurred;
   
   /* current scan info */
+  u_int8_t *line_done;
   
   
   /* line queue */

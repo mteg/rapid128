@@ -245,71 +245,136 @@ void help(char *progname, int verbosity)
   }
 }
 
-void r128_bfs_insert(struct r128_ctx *ctx, int f, int t, int currentmid)
+static inline int bfsguidance(int ctr)
 {
-  int lastpos;
-  
-  if(f > t) return; /* Nothing to scan further */
-  if(((f + t) / 2) == currentmid) return; /* Would repeat */
-  
-  /* No more entries in queue than total # of lines! */
-  assert((ctx->q_head + ctx->q_len) <= ctx->height);
-  
-  /* OK, insert the entry */
-  lastpos = ctx->q_head + ctx->q_len;
-  ctx->bfs_queue[lastpos].line_from = f;
-  ctx->bfs_queue[lastpos].line_to = t;
-  
-  /* Grow queue */
-  ctx->q_len++;
+    int b, res = 0;
+    
+    /* Reverse bits of the counter */
+    for(b = 0; b<16; b++)
+    {
+      res <<= 1;
+      res |= ctr & 1;
+      ctr >>= 1;
+    }
+    return res;
 }
 
 int r128_bfs_scan(struct r128_ctx *ctx, struct r128_image *img,
-          double threshold, double offset, double cuwidth, int rescan, int minspan)
+          double threshold, double offset, double cuwidth, int mindepth, int maxdepth)
 {
   int line, rc = R128_EC_NOCODE;
-
+  
+  int ctr, ctr_max = 1 << maxdepth;
+  
   /* Do a BFS scan of lines */
-  while(ctx.q_len > 0)
+  memset(ctx->line_done, 0, ctx->height);
+  for(ctr = 1 << mindepth; ctr < ctr_max; ctr++)
   {
-    /* Take an entry from queue */
-    struct r128_queue_entry qe = &ctx->bfs_queue[ctx.q_head];
+    /* Determine line number */
+    int line_idx = (ctx->height * bfsguidance(ctr)) >> 16;
     
-    /* Stop the scan at a spanning limit */
-    if((qe->line_to - qe->line_from) < minspan)
-      return;
+    /* Check if this line was already done in this pass */
+    if(ctx->line_done[line_idx]) continue;
     
-    /* Determine middle line */
-    line = (qe->line_from + qe->line_to) / 2;
+    /* Mark line as checked */
+    ctx->line_done[line_idx] = 1;
 
-    /* Scan this line */
+    /* Check the line */
     rc = min(rc, r128_scan_line(ctx, im, line, threshold, offset, cuwidth));
     
     /* If we found anything, maybe we can immediately quit? */
-    if(R128_ISDONE(ctx, rc)) return rc;
-   
-    /* Add BFS entries */ 
-    if(!rescan)
-    {
-      r128_bfs_insert(ctx, qe->line_from, line - 1, line);
-      r128_bfs_insert(ctx, line + 1, qe->line_to, line);
-    }
-    
-    /* Advance the queue */
-    ctx.q_len --;
-    ctx.q_head ++;
+    if(R128_ISDONE(ctx, rc))
+      return rc;
   }
+}
+
+int r128_explore(struct r128_ctx *ctx, char *bounds)
+{
+  static double offsets[] = {0, 0.5, 0.25, 0.75, 0.125, 0.375, 0.625, 0.875};
+  int offs, offs_min, offs_max;
+  int x_min, x_max, x;
+  int y_min, y_max;
+  struct r128_image *img;
+  int rc;
+  
+  img = strstr(bounds, "I") ? ctx->im : ctx->im_blurred;
+  
+  if(strstr(bounds, "X"))
+  {
+    x_min = 0;
+    x_max = ctx->x_depth1 + 1;
+  }
+  else
+  {
+    x_min = ctx->x_depth1;
+    x_max = ctx->x_depth2 + 1;
+  }
+  
+  if(strstr(bounds, "Y"))
+  {
+    y_min = 0;
+    y_max = ctx->y_depth1 + 1;
+  }
+  else
+  {
+    y_min = ctx->y_depth1;
+    y_max = ctx->y_depth2 + 1;
+  }
+  
+  if(strstr(bounds, "O"))
+  {
+    offs_min = 0;
+    offs_max = 4;
+  }
+  else
+  {
+    offs_min = 4;
+    offs_max = 8;
+  }
+  for(offs = offs_min; offs < offs_max; offs++)
+    for(x = x_min; x < x_max; x++)
+    {
+      rc = min(rc, r128_bfs_scan(ctx, ));
+      if(R128_ISDONE(ctx, rc))
+        return rc;
+    }
+  
+  return R128_EC_NOCODE;
+  
+  
+
+  
+  for(o
+  
 }
 
 int r128_struggle(struct r128_ctx *ctx)
 {
-  double offsets[] = {0, 0.5, 0.25, 0.75, 0.125, 0.375, 0.625, 0.875};
   double min_cuw, max_cuw;
   
   /* Minimum codeunit width of document is? */
   min_cuw = ((double) ctx->width) / ctx->max_uwidth;
   max_cuw = ((double) ctx->width) / ctx->min_uwidth;
   
+  rd ofs
+  0 0
+  0 1
+  
+  "ihro,Ihro,ihrO,IhrO,ihRo,IhRo,ihRO,IhRO,iHro,IHro,iHrO,IHrO,iHRo,IHRo,iHRO,IHRO";
+  "IYXO,iYXO,IYXo,iYXo,IYxO,iYxO,IYxo,iYxo,IyXO,iyXO,IyXo,iyXo,IyxO,iyxO,Iyxo,iyxo"
+  
+  /* Scanning strategy: 
+      (1) original, min codeheight, first resolution depth, basic offsets
+      (2) motionblurred, min codeheight, first resolution depth, basic offsets
+      (3) original, min codeheight, first resolution depth, remaining offsets
+      (4) motionblurred, min codeheight, first resolution depth, remaining offsets
+      (5) original, min codeheight, remaining resolution depths, basic offsets
+      (6) motionblurred, min codeheight, remaining resolution depths, basic offsets
+      (7) original, min codeheight, remaining resolution depths, remaining offsets
+      (8) motionblurred, min codeheight, remaining resolution depths, remaining offsets
+      
+      like above, but all codeheights 
+   */
   
   
   
