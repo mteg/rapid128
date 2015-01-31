@@ -2,23 +2,45 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <math.h>
+#include <stdarg.h>
 #include <string.h>
 #include <sys/types.h>
+#include <unistd.h>
 #include "read128.h"
 
-#define min(a, b) ((a) < (b) ? (a) : (b))
-
-int err(char *msg)
+static inline int minrc(int a, int b)
 {
-  fprintf(stderr, "%s\n", msg);
-  return 1;
+  if(a < b)
+    return a;
+  else
+    return b;
 }
 
-extern struct codetree_node * code_tree;
+struct r128_image * err(char *msg)
+{
+  fprintf(stderr, "%s\n", msg);
+  assert(NULL);
+  return NULL;
+}
+
+#warning implement a table instead of a tree
+extern struct r128_codetree_node * code_tree;
 extern char ** code_tables[];
 
-int r128_report_code(struct r128_ctx *ctx, char *code)
+inline static void r128_log(struct r128_ctx *ctx, int level, char *fmt, ...)
 {
+  va_list ap;
+  if(level > ctx->logging_level) return;
+  
+  va_start(ap, fmt);  
+  vfprintf(stderr, fmt, ap);
+  va_end(ap);
+}
+
+
+int r128_report_code(struct r128_ctx *ctx, char *code, int len)
+{
+  code[len] = 0;
   printf("%s\n", code);
   return R128_EC_SUCCESS;
 }
@@ -26,9 +48,10 @@ int r128_report_code(struct r128_ctx *ctx, char *code)
 int r128_cksum(int *symbols, int len)
 {
   int i, wsum = symbols[0];
+
   for(i = 1; i<len; i++)
     wsum += symbols[i] * i;
-  
+
   return wsum % 103;
 }
 
@@ -36,7 +59,7 @@ int r128_parse(struct r128_ctx *ctx, int *symbols, int len)
 {
   int table = 0, i;
   char outbuf[1024];
-  int pos = 0;
+  int pos = 0, ppos = 0;
 
   /* Min-length */
   if(len < 3)
@@ -44,15 +67,15 @@ int r128_parse(struct r128_ctx *ctx, int *symbols, int len)
   
   /* Checksum! */
   if(!(ctx->flags & R128_FL_NOCKSUM))
-    if(r128_cksum(symbols, len - 2) != symbols[len - 1])
+    if(r128_cksum(symbols, len - 2) != symbols[len - 2])
       return R128_EC_CHECKSUM; 
   
   outbuf[0] = 0;
   
   for(i = 0; i<len; i++)
   {
-    int c = symbols[i];
-    
+    int c = symbols[i], nb = 0;
+   
     if(c == 103)
       table = 0; /* START A */
     else if(c == 104)
@@ -66,11 +89,13 @@ int r128_parse(struct r128_ctx *ctx, int *symbols, int len)
     else if(c == 101 && table != 0)
       table = 0; /* CODE A */
     else if(c == 106)
-      return r128_report_code(ctx, outbuf);
+      return r128_report_code(ctx, outbuf, ppos);
     else if(c < 0 && c > 105)
-      pos += sprintf(outbuf + pos, " - ?? %d ?? - ", c); 
+      nb = sprintf(outbuf + pos, " - ?? %d ?? - ", c); 
     else
-      pos += sprintf(outbuf + pos, "%s", code_tables[table][c]);
+      nb = sprintf(outbuf + pos, "%s", code_tables[table][c]);
+
+    ppos = pos; pos += nb;
   }
   return R128_EC_NOEND;
 }
@@ -80,7 +105,7 @@ int r128_decode(struct r128_ctx *ctx, char *code_in)
 {
   int code_out[1024];
   int symbol = 0, i;
-  struct codetree_node *n = code_tree;
+  struct r128_codetree_node *n = code_tree;
   
   for(i = 0; code_in[i]; i++)
   {
@@ -93,11 +118,12 @@ int r128_decode(struct r128_ctx *ctx, char *code_in)
       int bit = nibble & 0x08;
       n = bit ? n->one : n->zero;
 
-      if(!n) return R128_EC_SYNTAX; /* Out of code */
+      if(!n) { fprintf(stderr, "ERR (%s)\n", code_in); return R128_EC_SYNTAX; } /* Out of code */
       if(n->code == -1) continue; /* Next bit please! */
       
       /* Got a symbol! */
       code_out[symbol++] = n->code;
+      fprintf(stderr, "[%d] ", n->code); 
       if(n->code == 106)
         /* Proper STOP! */
         return r128_parse(ctx, code_out, symbol);
@@ -123,21 +149,19 @@ int r128_find_code(struct r128_ctx *ctx, char *code)
     while((ptr = strstr(ptr, starts[i])))
     {
       /* Wow, we have _something_ */
-      rc = min(rc, R128_EC_NOEND);
+      rc = minrc(rc, R128_EC_NOEND);
 
       /* See if there is at least one ending */
       for(j = 0; j<4; j++)
         if(strstr(ptr, ends[j]))
         {
           /* Ending found - decode & eject! */
-          rc = min(rc, r128_decode(ctx, ptr));
+          rc = minrc(rc, r128_decode(ctx, ptr));
           break;
         }
 
       /* Have we succeeded? */
-      if(rc == RC128_EC_SUCCESS)
-        if(!(ctx->flags & R128_FL_ALLCODES))
-          return rc;
+      if(R128_ISDONE(ctx, rc)) return rc;
 
       /* Try next occurence of this start code */
       ptr++;
@@ -148,7 +172,7 @@ int r128_find_code(struct r128_ctx *ctx, char *code)
   return rc;
 }
   
-void r128_scan_line(struct r128_ctx *ctx, u_int8_t *im, int w, int h, int l, double pps, double offset, double threshold)
+int r128_scan_line(struct r128_ctx *ctx, struct r128_line *li, double uwidth, double offset, double threshold)
 {
   char b1[8192];
   char b2[8192];
@@ -158,17 +182,19 @@ void r128_scan_line(struct r128_ctx *ctx, u_int8_t *im, int w, int h, int l, dou
     b1, b2, b3, b4
   };
   int i, len, charlen, rc = R128_EC_NOCODE;
-  double ppos = offset;
+  double ppos = offset * uwidth, w = li->linesize;
+  u_int8_t *line = li->gray_data;
   
-  threshold *= 255.0 * pps;
+  if(!w) return R128_EC_NOLINE;
   
-  u_int8_t *line = im + l * w;
+  threshold *= 255.0 * uwidth;
   
-  len = lrint(floor(((double) w) / pps));
+  len = lrint(floor(((double) w) / uwidth));
   charlen = (len / 4) + 1;
   
-  printf("w = %d, pps = %.5f, offs = %.5f, thresh = %.5f, code len = %d\n", w, pps, offset, threshold, len);
-  
+//  printf("w = %d, uwidth = %.5f, offs = %.5f, thresh = %.5f, code len = %d\n", w, uwidth, offset, threshold, len);
+
+#warning no need to memset that much
   for(i = 0; i<4; i++)
     memset(b[i], 0, 8192);
     
@@ -177,7 +203,7 @@ void r128_scan_line(struct r128_ctx *ctx, u_int8_t *im, int w, int h, int l, dou
     double accu = 0.0, npos;
     int pmin, pmax, j, digit;
 
-    npos = ppos + pps;
+    npos = ppos + uwidth;
     
     /* Add remaining fraction */
     accu += (ceil(ppos) - ppos) * (double) line[lrint(floor(ppos))];
@@ -218,8 +244,9 @@ void r128_scan_line(struct r128_ctx *ctx, u_int8_t *im, int w, int h, int l, dou
 
     b[i][j] = 0;
     
-    rc = min(rc, r128_find_code(ctx, b[i]));
-    if(RC128_ISDONE(rc, ctx)) return rc;
+    rc = minrc(rc, r128_find_code(ctx, b[i]));
+    if(R128_ISDONE(ctx, rc))
+      return rc;
   }
   
   return rc;
@@ -245,6 +272,64 @@ void help(char *progname, int verbosity)
   }
 }
 
+#define R128_MARGIN_CLASS(c, val) ((val) >= (c)->margin_high_threshold ? 1 : ((val) <= (c)->margin_low_threshold ? -1 : 0))
+
+struct r128_line *r128_get_line(struct r128_ctx *ctx, struct r128_image *im, int line)
+{
+  int min_len = ctx->min_len, max_gap = ctx->max_gap;
+  u_int8_t *data;
+  int len, start = 0;
+  
+  if(im->lines[line].gray_data) return &im->lines[line];
+  
+  data = im->gray_data + line * ctx->width;
+
+  start = 0;
+  len = ctx->width;
+  
+  if((min_len >= max_gap) && 0)
+  {
+    int prev_so_far = R128_MARGIN_CLASS(ctx, data[min_len - max_gap]);
+    int so_far, gap;
+    
+    /* Left margin */
+    for(gap = 1; prev_so_far && (gap + min_len - max_gap)<len; prev_so_far = so_far, gap++)
+      if((so_far = R128_MARGIN_CLASS(ctx, data[gap + min_len - max_gap])) != prev_so_far)
+        break;
+    
+    /* Indeed a gap! */
+    if(gap > max_gap)
+    {
+      start = gap + min_len - max_gap;
+      len -= start;
+    }
+    
+    /* Right margin */
+    if(len > min_len)
+    {
+      prev_so_far = R128_MARGIN_CLASS(ctx, data[start + len - min_len + max_gap]);
+
+      for(gap = 1; prev_so_far && (start + len - gap - min_len + max_gap) >= 0; prev_so_far = so_far, gap++)
+        if((so_far = R128_MARGIN_CLASS(ctx, data[start + len - gap - min_len + max_gap])) != prev_so_far)
+          break;
+      
+      /* Indeed a gap! */
+      if(gap > max_gap)
+        len -= gap;
+    }
+  }
+  
+  if(len < min_len) len = 0;
+  r128_log(ctx, R128_DEBUG2, "Prepared line %d of image %p: start = %d, len = %d\n", line, im, start, len);
+
+  im->lines[line].gray_data = data + start;
+  im->lines[line].linesize = len;
+  
+  return &im->lines[line];
+  
+  
+}
+
 static inline int bfsguidance(int ctr)
 {
     int b, res = 0;
@@ -259,163 +344,228 @@ static inline int bfsguidance(int ctr)
     return res;
 }
 
-int r128_bfs_scan(struct r128_ctx *ctx, struct r128_image *img,
-          double threshold, double offset, double cuwidth, int mindepth, int maxdepth)
+static inline int log2_ceil(int val)
 {
-  int line, rc = R128_EC_NOCODE;
+  int s = 1;
+  while(s <= val)
+    s <<= 1;
+  return s;
+}
+
+int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
+          double offset, double uwidth, int minheight, int maxheight)
+{
+  int rc = R128_EC_NOTHING;
+  int min_ctr, max_ctr, ctr, lines_scanned = 0;
   
-  int ctr, ctr_max = 1 << maxdepth;
+  min_ctr = log2_ceil(ctx->height / maxheight);
+  max_ctr = log2_ceil(ctx->height / minheight);
   
-  /* Do a BFS scan of lines */
-  memset(ctx->line_done, 0, ctx->height);
-  for(ctr = 1 << mindepth; ctr < ctr_max; ctr++)
+  ctx->page_scan_id++;
+  r128_log(ctx, R128_DEBUG1, "Page scan # %d starts: offs = %.3f, th = %.2f, heights = %d ~ %d, uwidth = %.2f\n", 
+        ctx->page_scan_id, offset, ctx->threshold, minheight, maxheight, uwidth);
+  
+  /* Do a BFS scan of page lines @ particular offset and unit width */
+  for(ctr = min_ctr; ctr < max_ctr; ctr++)
   {
     /* Determine line number */
     int line_idx = (ctx->height * bfsguidance(ctr)) >> 16;
     
     /* Check if this line was already done in this pass */
-    if(ctx->line_done[line_idx]) continue;
+    if(ctx->line_scan_status[line_idx] == ctx->page_scan_id) continue;
     
     /* Mark line as checked */
-    ctx->line_done[line_idx] = 1;
+    ctx->line_scan_status[line_idx] = ctx->page_scan_id;
 
     /* Check the line */
-    rc = min(rc, r128_scan_line(ctx, im, line, threshold, offset, cuwidth));
+    rc = minrc(rc, r128_scan_line(ctx, r128_get_line(ctx, img, line_idx), uwidth, offset, ctx->threshold));
+    
+    /* Increment scanned lines counter */
+    lines_scanned ++;
     
     /* If we found anything, maybe we can immediately quit? */
     if(R128_ISDONE(ctx, rc))
+    {
+      r128_log(ctx, R128_NOTICE, "Code was found in page scan # %d, offs = %.3f, th = %.2f, heights = %d ~ %d, uwidth = %.2f, line = %d\n", 
+            ctx->page_scan_id, offset, ctx->threshold, minheight, maxheight, uwidth, line_idx);
       return rc;
+    }
   }
+  r128_log(ctx, R128_DEBUG1, "Page scan %d finished, scanned %d lines, best rc = %d\n", ctx->page_scan_id, lines_scanned, rc);
+
+  return rc;
 }
 
-int r128_explore(struct r128_ctx *ctx, char *bounds)
+void r128_alloc_lines(struct r128_ctx *ctx, struct r128_image *i)
+{
+  assert((i->lines = (struct r128_line*) malloc(sizeof(struct r128_line) * ctx->height)));
+  memset(i->lines, 0, sizeof(struct r128_line) * ctx->height);
+}
+
+struct r128_image * r128_blur_image(struct r128_ctx * ctx)
+{
+  struct r128_image *i;
+  int *accu;
+  int x, y, bh = ctx->blurring_height;
+  u_int8_t *minus_line = ctx->im->gray_data, *plus_line = ctx->im->gray_data;
+  u_int8_t *result;
+  
+  if(ctx->im_blurred) return ctx->im_blurred;
+
+  r128_log(ctx, R128_DEBUG1, "Preparing a blurred image\n");
+  
+  assert((i = (struct r128_image*) malloc(sizeof(struct r128_image))));
+  memset(i, 0, sizeof(struct r128_image));
+  
+  assert((result = i->gray_data = (u_int8_t*) malloc(ctx->width * ctx->height)));
+  r128_alloc_lines(ctx, i);
+
+  assert((accu = (int*) malloc(sizeof(int) * ctx->width)));
+  memset(accu, 0, sizeof(int) * ctx->width);
+  
+  for(y = 0; y<ctx->height; y++)
+  {
+    for(x = 0; x<ctx->width; x++)
+    {
+      if(y > bh) accu[x] -= minus_line[x];
+      accu[x] += plus_line[x];
+      *(result++) = accu[x] / bh;
+    }
+    if(y > bh)
+      minus_line += ctx->width; 
+    plus_line += ctx->width;
+  }
+  
+  free(accu);
+  r128_log(ctx, R128_DEBUG2, "Blurred image prepared\n");
+  return i;  
+}
+
+int r128_try_tactics(struct r128_ctx *ctx, char *tactics)
 {
   static double offsets[] = {0, 0.5, 0.25, 0.75, 0.125, 0.375, 0.625, 0.875};
-  int offs, offs_min, offs_max;
-  int x_min, x_max, x;
-  int y_min, y_max;
-  struct r128_image *img;
-  int rc;
+  int w_ctr_min = 1, w_ctr_max = ctx->wctrmax_stage1, w_ctr;
+  int offs, offs_min = 0, offs_max = 4;
+  int h_min = ctx->expected_min_height, h_max = ctx->height;
+  char *thresh_input;
+
+  struct r128_image *img = ctx->im; 
+  int rc = R128_EC_NOTHING;
   
-  img = strstr(bounds, "I") ? ctx->im : ctx->im_blurred;
+  if(strstr(tactics, "i"))
+    img = r128_blur_image(ctx);
   
-  if(strstr(bounds, "X"))
-  {
-    x_min = 0;
-    x_max = ctx->x_depth1 + 1;
-  }
-  else
-  {
-    x_min = ctx->x_depth1;
-    x_max = ctx->x_depth2 + 1;
-  }
-  
-  if(strstr(bounds, "Y"))
-  {
-    y_min = 0;
-    y_max = ctx->y_depth1 + 1;
-  }
-  else
-  {
-    y_min = ctx->y_depth1;
-    y_max = ctx->y_depth2 + 1;
-  }
-  
-  if(strstr(bounds, "O"))
-  {
-    offs_min = 0;
-    offs_max = 4;
-  }
-  else
-  {
-    offs_min = 4;
-    offs_max = 8;
-  }
+  if(strstr(tactics, "o")) { offs_min = 4; offs_max = 8; }
+  if(strstr(tactics, "h")) { h_min = 1; h_max = ctx->expected_min_height; }
+  if(strstr(tactics, "w")) { w_ctr_min = w_ctr_max; w_ctr_max = ctx->wctrmax_stage2; }
+
+  if((thresh_input = strstr(tactics, "@")))
+    if(sscanf(thresh_input + 1, "%lf", &ctx->threshold) != 1)
+      r128_log(ctx, R128_NOTICE, "Invalid threshold in tactics: '%s', ignoring.\n", tactics);
+
+  r128_log(ctx, R128_DEBUG1, "Now assuming tactics '%s'\n", tactics);
   for(offs = offs_min; offs < offs_max; offs++)
-    for(x = x_min; x < x_max; x++)
+    for(w_ctr = w_ctr_min; w_ctr < w_ctr_max; w_ctr++)
     {
-      rc = min(rc, r128_bfs_scan(ctx, ));
+      /* First, determine document width in code units for this try */
+      double cuw = ctx->min_doc_cuw + ctx->doc_cuw_span * bfsguidance(w_ctr) / 65536.0;
+
+      /* Determine unit width to act with for this w_ctr */
+      double uwidth = ((double) ctx->width) / cuw;
+      
+      rc = minrc(rc, r128_page_scan(ctx, img, offsets[offs], uwidth, h_min, h_max));
       if(R128_ISDONE(ctx, rc))
         return rc;
     }
   
-  return R128_EC_NOCODE;
-  
-  
-
-  
-  for(o
-  
+  r128_log(ctx, R128_DEBUG2, "Best result for tactics '%s': %d\n", tactics, rc);
+  return rc;
 }
 
-int r128_struggle(struct r128_ctx *ctx)
+int r128_try_strategy(struct r128_ctx *ctx, char *strategy)
 {
-  double min_cuw, max_cuw;
+  int rc = R128_EC_NOTHING;
+  
+  assert((strategy = strdup(strategy)));
+
+  /* Precompute data for cropping lines */
+  
+  /* A meaningful barcode is at least 4 * 13 bits * unit_width pixels wide */
+  /* (START-X) 1 symbol checksum (END) */
+  
+  /* This means, that, taking a minimal assumed unit width,
+     if at position 4*13*min_uwidth there was still no barcode, it means
+     all there was is a garbage 
+     
+     On the other hand, there cannot be a gap of more than
+     max_uwidth * 4 white/black pixels. This follows from how
+     the code is constructed (Never more than 4 ones or zeros in row)
+     
+     We take an extra margin and assume 6.
+  */
+  ctx->min_len = lrint(floor(4.0 * 13.0 * ctx->min_uwidth));
+  ctx->max_gap = lrint(ceil(6.0 * ctx->max_uwidth));
+  
+  /* Precompute data for unit width search */
   
   /* Minimum codeunit width of document is? */
-  min_cuw = ((double) ctx->width) / ctx->max_uwidth;
-  max_cuw = ((double) ctx->width) / ctx->min_uwidth;
+  ctx->min_doc_cuw = ((double) ctx->width) / ctx->max_uwidth;
+  ctx->max_doc_cuw = ((double) ctx->width) / ctx->min_uwidth;
   
-  rd ofs
-  0 0
-  0 1
+  /* Therefore, we span a range of...? */
+  ctx->doc_cuw_span = ctx->max_doc_cuw - ctx->min_doc_cuw;
   
-  "ihro,Ihro,ihrO,IhrO,ihRo,IhRo,ihRO,IhRO,iHro,IHro,iHrO,IHrO,iHRo,IHRo,iHRO,IHRO";
-  "IYXO,iYXO,IYXo,iYXo,IYxO,iYxO,IYxo,iYxo,IyXO,iyXO,IyXo,iyXo,IyxO,iyxO,Iyxo,iyxo"
+  /* Number of subdivisions required to reach a difference less than cuw_delta1? */
+  ctx->wctrmax_stage1 = log2_ceil(lrint(ctx->doc_cuw_span / ctx->min_cuw_delta1));
+  ctx->wctrmax_stage2 = log2_ceil(lrint(ctx->doc_cuw_span / ctx->min_cuw_delta2));
   
-  /* Scanning strategy: 
-      (1) original, min codeheight, first resolution depth, basic offsets
-      (2) motionblurred, min codeheight, first resolution depth, basic offsets
-      (3) original, min codeheight, first resolution depth, remaining offsets
-      (4) motionblurred, min codeheight, first resolution depth, remaining offsets
-      (5) original, min codeheight, remaining resolution depths, basic offsets
-      (6) motionblurred, min codeheight, remaining resolution depths, basic offsets
-      (7) original, min codeheight, remaining resolution depths, remaining offsets
-      (8) motionblurred, min codeheight, remaining resolution depths, remaining offsets
-      
-      like above, but all codeheights 
-   */
-  
-  
-  
-int r128_bfs_scan(struct r128_ctx *ctx, struct r128_image *img,
-          double threshold, double offset, double cuwidth, int rescan, int minspan)
-
+  while(strategy)
+  {
+    char *next_strategy = index(strategy, ',');
+    if(next_strategy) *(next_strategy++) = 0;
+    rc = minrc(rc, r128_try_tactics(ctx, strategy));
+    if(R128_ISDONE(ctx, rc))
+      return rc;
+    strategy = next_strategy;
+  }
+  r128_log(ctx, R128_DEBUG2, "Giving up. Best result is %d\n", rc);
+  return rc;
 }
 
-int main(int argc, char ** argv)
+void r128_defaults(struct r128_ctx *c)
 {
-  FILE *fh;
+  memset(c, 0, sizeof(struct r128_ctx));
+  c->strategy = "IHWO@0.5,iHWO,IHWo,iHWo,IHwO,iHwO,IHwo,iHwo,IhWO,ihWO,IhWo,ihWo,IhwO,ihwO,Ihwo,ihwo";
+  c->min_uwidth = 0.9;
+  c->max_uwidth = 4;
+  c->threshold = 0.5;
+  c->margin_low_threshold = 20;
+  c->margin_high_threshold = 235;
+  c->min_cuw_delta2 = 2;
+  c->min_cuw_delta1 = 10;
+  c->expected_min_height = 8;
+  c->blurring_height = 4;
+}
+
+void r128_alloc_buffers(struct r128_ctx *c)
+{
+  assert((c->line_scan_status = (int*) malloc(sizeof(int) * c->height)));
+  memset(c->line_scan_status, 0, sizeof(int) * c->height);
+}
+
+struct r128_image * r128_read_pgm(struct r128_ctx *c, FILE *fh)
+{
+  struct r128_image *r;
+
   char line[128 + 1];
-  int w, h, i; 
+  int w, h; 
   u_int8_t *im;
-  struct r128_ctx ctx; 
-  
-  int c, nh = 0;
-  
-  while((c = getopt(argc, argv, "")))
-  {
-    switch(c)
-    {
-      case 'h':
-        help(argv[0], nh++);
-        break;
-    }
-  }
-  
-  
-  if(argc < 3)
-  {
-    fprintf(stderr, "Usage: read128 <file name>.pgm <coeff>\n");
-    return 1;
-  }
-  
-  if(!(fh = fopen(argv[1], "rb")))
-  {
-    perror("fopen");
-    return 1;
-  }
-  
+
+  r128_log(c, R128_DEBUG1, "Loading image.");
+
+  assert((r = (struct r128_image*) malloc(sizeof(struct r128_image))));
+  memset(r, 0, sizeof(struct r128_image));
+
   if(!fgets(line, 128, fh)) return err("Invalid file format (1)");
   if(strncmp(line, "P5", 2)) return err("Invalid file format (2)");
 
@@ -425,29 +575,59 @@ int main(int argc, char ** argv)
   if(sscanf(line, "%d %d", &w, &h) != 2) return err("Invalid file format (5, wrong size)");
   if(!fgets(line, 128, fh)) return err("Invalid file format (6)");
   
+  
+  
   assert(im = (unsigned char*) malloc(w * h));
   if(fread(im, w * h, 1, fh) != 1) return err("Read error (file truncated?)");
+  
+  r->gray_data = im;
+  c->width = w;
+  c->height = h;
+  
+
+  r128_alloc_lines(c, r);
+  r128_log(c, R128_DEBUG2, "Image loaded.");
+  return r;
+}
+
+int main(int argc, char ** argv)
+{
+  FILE *fh;
+  struct r128_ctx ctx;
+  int c, nh = 0;
+
+  r128_defaults(&ctx);
+  
+  while((c = getopt(argc, argv, "hv")) != EOF)
+  {
+    switch(c)
+    {
+      case 'h':
+        help(argv[0], nh++);
+        break;
+      case 'v':
+        ctx.logging_level++;
+        break;        
+    }
+  }
+   
+  if(!argv[optind])
+  {
+    fprintf(stderr, "Usage: read128 <file name>.pgm\n");
+    return 1;
+  }
+  
+  if(!(fh = fopen(argv[optind], "rb")))
+  {
+    perror("fopen");
+    return 1;
+  }
+  ctx.im = r128_read_pgm(&ctx, fh);
+  
   fclose(fh);
   
-  
-  assert(ctx.bfs_queue = (struct r128_queue_entry*) malloc(sizeof(struct r128_queue_entry) * (ctx.height + 16)));
-  ctx.q_len = 1; ctx.q_head = 0;
-  ctx.bfs_queue[0].line_from = 0;
-  ctx.bfs_queue[0].line_to = ctx.height - 1;
-  
-  
-  
-  
-  
-  for(i = 0; i<h; i++)
-  {
-    double pps = atof(argv[2]);
-    double offset = 0;
-    int j;
-    
-    for(j = 0; j<8; j++, offset += pps / 8.0)
-      scan_line(im, w, h, i, pps, offset, 0.5);
-  }
+  r128_alloc_buffers(&ctx);
+  r128_try_strategy(&ctx, ctx.strategy);
   
   
   return 0;
