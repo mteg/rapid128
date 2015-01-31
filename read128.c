@@ -24,7 +24,8 @@ struct r128_image * err(char *msg)
 }
 
 #warning implement a table instead of a tree
-extern struct r128_codetree_node * code_tree;
+//extern struct r128_codetree_node * code_tree;
+extern char code_symbols[];
 extern char ** code_tables[];
 
 inline static void r128_log(struct r128_ctx *ctx, int level, char *fmt, ...)
@@ -105,7 +106,7 @@ int r128_decode(struct r128_ctx *ctx, char *code_in)
 {
   int code_out[1024];
   int symbol = 0, i;
-  struct r128_codetree_node *n = code_tree;
+  int cur = 0, curbit = 0;
   
   for(i = 0; code_in[i]; i++)
   {
@@ -116,19 +117,30 @@ int r128_decode(struct r128_ctx *ctx, char *code_in)
     for(bitcount = 0; bitcount<4; bitcount++, nibble <<= 1)
     {
       int bit = nibble & 0x08;
-      n = bit ? n->one : n->zero;
 
-      if(!n) { fprintf(stderr, "ERR (%s)\n", code_in); return R128_EC_SYNTAX; } /* Out of code */
-      if(n->code == -1) continue; /* Next bit please! */
+      cur <<= 1;
+      if(bit) cur |= 1;
       
-      /* Got a symbol! */
-      code_out[symbol++] = n->code;
-      fprintf(stderr, "[%d] ", n->code); 
-      if(n->code == 106)
-        /* Proper STOP! */
-        return r128_parse(ctx, code_out, symbol);
+      curbit++;
+      
+      if(curbit == 11)
+      {
+        int cs = code_symbols[(cur >> 1) & 0x1ff];
+        
+        if((cur & 1) || (!(cur & 0x400)) || cs == 255)
+          { fprintf(stderr, "ERR (%s)\n", code_in); return R128_EC_SYNTAX; }
+        
+        /* Got a symbol! */
+        code_out[symbol++] = cs;
+        fprintf(stderr, "[%d] ", cs); 
+        if(cs == 106)
+          /* Proper STOP! */
+          return r128_parse(ctx, code_out, symbol);
 
-      n = code_tree;
+        cur = 0; curbit = 0;
+      }
+      
+        
     }
   }
   return R128_EC_SYNTAX;
@@ -200,32 +212,41 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_line *li, double uwidth, do
     
   for(i = 0; i<len; i++)
   {
-    double accu = 0.0, npos;
+    double accu = 0.0, npos, sppos;
     int pmin, pmax, j, digit;
 
     npos = ppos + uwidth;
+
+    sppos = ceil(ppos);
     
-    /* Add remaining fraction */
-    accu += (ceil(ppos) - ppos) * (double) line[lrint(floor(ppos))];
-    
-    /* Advance to next whole pixel */ 
-    ppos = ceil(ppos);
-    
-    /* Number of pixels to read and average */
-    pmin = lrint(ppos);
-    pmax = lrint(floor(npos));
-    for(j = pmin; j<pmax; j++)
-      accu += (double) line[j];
+    if(sppos < npos)
+    {
+      /* Add remaining fraction */
+      accu += (ceil(ppos) - ppos) * (double) line[lrint(floor(ppos))];
       
-    /* Add remaining fraction */
-    accu += (npos - floor(npos)) * (double) line[lrint(floor(npos))];
+      /* Advance to next whole pixel */ 
+      ppos = sppos;
+      
+      /* Number of pixels to read and average */
+      pmin = lrint(ppos);
+      pmax = lrint(floor(npos));
+      for(j = pmin; j<pmax; j++)
+        accu += (double) line[j];
+        
+      /* Add remaining fraction */
+      accu += (npos - floor(npos)) * (double) line[lrint(floor(npos))];
+    }
+    else
+      accu += (npos - ppos) * (double) line[lrint(floor(ppos))];
+    
     
     /* Threshold! */
     if(accu > threshold)
       digit = 0;
     else
       digit = 1;
-    
+
+//        printf("%d/%d: %.3f <> %.3f (%.2f + %.2f = %.2f)\n", i, len, accu, threshold, npos - uwidth, uwidth, npos);
     /* Write to buffers */
     for(j = 0; j<4; j++)
     {
