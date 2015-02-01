@@ -1,20 +1,19 @@
-
-struct r128_codetree_node
-{
-  int code;
-  struct r128_codetree_node * zero;
-  struct r128_codetree_node * one;
-};
-
-
 struct r128_line
 {
-  u_int8_t *gray_data;
-  int linesize;
+  u_int32_t offset;
+  u_int32_t linesize;
 };
 
 struct r128_image 
 {
+  char *filename;
+  int width, height, best_result;
+
+  u_int8_t *bestcode;
+  int bestcode_len, bestcode_alloc;
+  
+  double time_spent;
+
   u_int8_t *gray_data;
   struct r128_line *lines;
 };
@@ -25,16 +24,29 @@ struct r128_ctx
   int flags;
 #define R128_FL_READALL 1
 #define R128_FL_NOCKSUM 2
+#define R128_FL_EREPORT 4
+#define R128_FL_MMAPALL 8
+#define R128_FL_RAMALL 16
+#define R128_FL_NOCROP 32
+#define R128_FL_KEEPTEMPS 64
 
+  char *temp_prefix;
+
+  struct timespec startup;
+  
   int logging_level;
   int page_scan_id;
 
-  /* document size */
-  int width, height;
+  /* maximal height */
+  int height;
+  
+  int *codebuf;
+  int codepos, codealloc;
   
   /* min/max code unit width to assume */
   double min_uwidth, max_uwidth;
   double min_doc_cuw, max_doc_cuw, doc_cuw_span;
+
   double threshold;
   int margin_low_threshold, margin_high_threshold;
   
@@ -47,12 +59,18 @@ struct r128_ctx
   /* how far to go with line distance in BFS scan */
   int expected_min_height, blurring_height;
 
+  /* images */
   struct r128_image *im;
   struct r128_image *im_blurred;
   
   /* current scan info */
   int *line_scan_status;
-
+  
+  double batch_limit;
+  int batch_size;
+  
+  char *loader;
+  double loader_limit;
 };
 
 
@@ -62,6 +80,7 @@ struct r128_ctx
 #define R128_EC_NOEND 3
 #define R128_EC_NOCODE 4
 #define R128_EC_NOLINE 5
+#define R128_EC_NOIMAGE 6
 #define R128_EC_NOTHING 100
 
 #define R128_ISDONE(ctx, rc) ((rc) == R128_EC_SUCCESS && (!((ctx)->flags & R128_FL_READALL)))

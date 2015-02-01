@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <time.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <math.h>
@@ -36,6 +37,51 @@ inline static void r128_log(struct r128_ctx *ctx, int level, char *fmt, ...)
   va_start(ap, fmt);  
   vfprintf(stderr, fmt, ap);
   va_end(ap);
+}
+
+inline static void r128_fail(struct r128_ctx *ctx, char *fmt, ...)
+{
+  va_list ap;
+
+  va_start(ap, fmt);  
+  vfprintf(stderr, fmt, ap);
+  va_end(ap);
+  
+  exit(1);
+}
+
+double r128_time(struct r128_ctx *ctx)
+{
+  struct timespec ts;
+  double res;
+
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  res  = (double) (ts.tv_nsec - ctx->startup.tv_nsec);
+  res /= 1000000000.0;
+  res += (double) (ts.tv_sec - ctx->startup.tv_sec);
+  
+  return res;
+}
+
+void *r128_malloc(struct r128_ctx *ctx, int size)
+{
+  void *ret;
+  assert((ret = malloc(size)));
+  return ret;
+}
+
+void *r128_realloc(struct r128_ctx *ctx, void *ptr, int size)
+{
+  void *ret;
+  assert((ret = realloc(ptr, size)));
+  return ret;
+}
+
+void *r128_zalloc(struct r128_ctx *ctx, int size)
+{
+  void *ret = r128_alloc(ctx, size);
+  memset(ret, 0, size);
+  return ret;
 }
 
 
@@ -102,120 +148,26 @@ int r128_parse(struct r128_ctx *ctx, int *symbols, int len)
 }
 
 
-int r128_decode(struct r128_ctx *ctx, char *code_in)
+
+u_int32_t r128_read_bits(struct r128_ctx *ctx, u_int8_t *line, int w, double ppos, 
+                            double uwidth, double threshold,
+                            u_int32_t pattern, u_int32_t mask, int read_limit, double *curpos)
 {
-  int code_out[1024];
-  int symbol = 0, i;
-  int cur = 0, curbit = 0;
+  int i;
+  u_int32_t res = 0;
   
-  for(i = 0; code_in[i]; i++)
-  {
-    /* Push four bits */
-    u_int8_t nibble = code_in[i] - 'A';
-    int bitcount = 0;
-    
-    for(bitcount = 0; bitcount<4; bitcount++, nibble <<= 1)
-    {
-      int bit = nibble & 0x08;
-
-      cur <<= 1;
-      if(bit) cur |= 1;
-      
-      curbit++;
-      
-      if(curbit == 11)
-      {
-        int cs = code_symbols[(cur >> 1) & 0x1ff];
-        
-        if((cur & 1) || (!(cur & 0x400)) || cs == 255)
-          { fprintf(stderr, "ERR (%s)\n", code_in); return R128_EC_SYNTAX; }
-        
-        /* Got a symbol! */
-        code_out[symbol++] = cs;
-        fprintf(stderr, "[%d] ", cs); 
-        if(cs == 106)
-          /* Proper STOP! */
-          return r128_parse(ctx, code_out, symbol);
-
-        cur = 0; curbit = 0;
-      }
-      
-        
-    }
-  }
-  return R128_EC_SYNTAX;
-}
-
-int r128_find_code(struct r128_ctx *ctx, char *code)
-{
-  static char * starts[] = {"NCA", "NCB", "NAJ", "NAI", "NDJ", "NDI"};
-  static char * ends[] = {"BNG", "DKM", "HFI", "IOL"};
-  int i, j, rc = R128_EC_NOCODE;
-  char *ptr;
-  
-  /* Try all start codes */
-  for(i = 0; i<6; i++)
-  {
-    ptr = code;
-    /* Look for all occurences of this start code */
-    while((ptr = strstr(ptr, starts[i])))
-    {
-      /* Wow, we have _something_ */
-      rc = minrc(rc, R128_EC_NOEND);
-
-      /* See if there is at least one ending */
-      for(j = 0; j<4; j++)
-        if(strstr(ptr, ends[j]))
-        {
-          /* Ending found - decode & eject! */
-          rc = minrc(rc, r128_decode(ctx, ptr));
-          break;
-        }
-
-      /* Have we succeeded? */
-      if(R128_ISDONE(ctx, rc)) return rc;
-
-      /* Try next occurence of this start code */
-      ptr++;
-    }
-  }
-  
-  /* No luck or they want us to print absolutely all */
-  return rc;
-}
-  
-int r128_scan_line(struct r128_ctx *ctx, struct r128_line *li, double uwidth, double offset, double threshold)
-{
-  char b1[8192];
-  char b2[8192];
-  char b3[8192];
-  char b4[8192];
-  char *b[4] = {
-    b1, b2, b3, b4
-  };
-  int i, len, charlen, rc = R128_EC_NOCODE;
-  double ppos = offset * uwidth, w = li->linesize;
-  u_int8_t *line = li->gray_data;
-  
-  if(!w) return R128_EC_NOLINE;
-  
-  threshold *= 255.0 * uwidth;
-  
-  len = lrint(floor(((double) w) / uwidth));
-  charlen = (len / 4) + 1;
-  
-//  printf("w = %d, uwidth = %.5f, offs = %.5f, thresh = %.5f, code len = %d\n", w, uwidth, offset, threshold, len);
-
-#warning no need to memset that much
-  for(i = 0; i<4; i++)
-    memset(b[i], 0, 8192);
-    
-  for(i = 0; i<len; i++)
+  for(i = 0; i<read_limit; i++)
   {
     double accu = 0.0, npos, sppos;
-    int pmin, pmax, j, digit;
+    int pmin, pmax, j;
 
     npos = ppos + uwidth;
+ 
+    if(lrint(ceil(npos)) >= w) 
+    {
+      if(curpos) *curpos = npos;
+      break;
+    }
 
     sppos = ceil(ppos);
     
@@ -237,61 +189,153 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_line *li, double uwidth, do
       accu += (npos - floor(npos)) * (double) line[lrint(floor(npos))];
     }
     else
-      accu += (npos - ppos) * (double) line[lrint(floor(ppos))];
+      accu += (npos - ppos) * (double) line[lrint(floor(ppos))];    
     
-    
-    /* Threshold! */
-    if(accu > threshold)
-      digit = 0;
-    else
-      digit = 1;
+    /* Ready for inputting the next bit */
+    res <<= 1;
 
-//        printf("%d/%d: %.3f <> %.3f (%.2f + %.2f = %.2f)\n", i, len, accu, threshold, npos - uwidth, uwidth, npos);
-    /* Write to buffers */
-    for(j = 0; j<4; j++)
-    {
-      b[j][(i + j) >> 2] <<= 1;
-      b[j][(i + j) >> 2] |= digit;
-    }
-    
+    /* Threshold! */
+    if(accu < threshold)
+      res |= 1;
+
+    if(curpos)
+      *curpos = npos;
+
+    if(mask)
+      if((res & mask) == pattern)
+        return res;
+        
     ppos = npos;
   }
   
-  for(i = 0; i<4; i++)
-  {
-    int j;
-    for(j = 0; j<charlen; j++)
-      b[i][j] += 'A';
+  return res;
+}
 
-    b[i][j] = 0;
+int r128_read_code(struct r128_ctx *ctx, u_int8_t *line, int w, double ppos, double uwidth, double threshold)
+{
+  int rc = R128_EC_NOEND;
+  int i_thresh = lrint(threshold / uwidth);
+  static double weights[] = {1.0, 1.02, 0.98, 1.01, 0.99};
+  double new_ppos;
+  
+  fprintf(stderr, "[%d] ", ctx->codebuf[0]);
+  while(lrint(ceil(ppos + 5*uwidth)) < w) 
+  {
+    int i, cs, i_ppos, offset;
+    u_int32_t code;
     
-    rc = minrc(rc, r128_find_code(ctx, b[i]));
-    if(R128_ISDONE(ctx, rc))
-      return rc;
+    /* Przejście między symbolami: Biały/Czarny */
+
+    /* Pod ppos powinien być czarny piksel, a przed - biały */
+    
+/*    i_ppos = lrint(floor(ppos));
+    
+    for(offset = 0; offset < 5; offset++)
+    {
+      if(line[i_ppos + offset] < i_thresh && line[i_ppos + offset - 1] > i_thresh)
+      {
+        printf("corrected by %d; @%d: %d %d\n", offset, i_ppos + offset - 1, line[i_ppos + offset - 1], line[i_ppos + offset]);
+        i_ppos += offset;
+        break;
+      }
+      if(line[i_ppos - offset] < i_thresh && line[i_ppos - offset - 1] > i_thresh)
+      {
+        printf("corrected by %d; @%d: %d %d\n", offset, i_ppos - offset - 1, line[i_ppos - offset - 1], line[i_ppos - offset]);
+        i_ppos -= offset;
+        break;
+      }
+    }  
+    ppos = i_ppos;*/
+//    ppos = floor(ppos);
+    
+    for(i = 0; i<5; i++) 
+    {
+      code = r128_read_bits(ctx, line, w, ppos - uwidth - uwidth / 4.0, uwidth * weights[i], threshold * weights[i], 0, 0, 13, &new_ppos);
+      cs = code_symbols[(code >> 2) & 0x1ff];
+    
+      if(!((code & 2) || (!(code & 1)) || (!(code & 0x800)) || (code & 0x1000) || cs == -1))
+        break;
+      else
+      {
+        int i;
+        fprintf(stderr, " ER");
+//        for(i = 12; i>=0; i--)
+//          fprintf(stderr, ((code >> i) & 0x1) ? "1" : "0");
+      }
+    }
+    
+    if(i == 5)
+    {
+        fprintf(stderr, "\n");
+        return R128_EC_SYNTAX; 
+    }
+    
+    ctx->codebuf[ctx->codepos++] = cs;
+    
+    /* Perhaps we need to extend the code */
+    if(ctx->codepos >= ctx->codealloc)
+    {
+      ctx->codealloc *= 2;
+      assert((ctx->codebuf = (int*) r128_realloc(ctx, ctx->codebuf, sizeof(int) * ctx->codealloc)));
+    }
+    
+    fprintf(stderr, "[%d] ", cs); 
+    if(cs == 106)
+      /* Proper STOP! */
+      return r128_parse(ctx, ctx->codebuf, ctx->codepos);
+    
+    ppos = new_ppos - uwidth;
+  }
+  
+  return rc;
+}
+  
+int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, double uwidth, double offset, double threshold)
+{
+  
+/*
+  00 1101 0000 1001 = 0x0d09
+  00 1101 0010 0001 = 0x0d21
+  00 1101 0011 1001 = 0x0d39  
+  00 1101 00XX X001 = 0x0d01 = pattern
+                      0x3fc1 = mask
+ */ 
+  int rc = R128_EC_NOCODE;
+  double ppos = offset * uwidth, w = li->linesize;
+  u_int8_t *line = im->gray_data + li->offset;
+  
+  if(!w) return R128_EC_NOLINE;
+    
+  threshold *= 255.0 * uwidth;
+
+  while(1)
+  {
+    u_int32_t start_symbol = r128_read_bits(ctx, line, w, ppos, uwidth, threshold, 
+                      0x0d01, 0x3fc1, 65536, &ppos);
+    
+    if(lrint(ceil(ppos)) >= w) break; /* Nothing interesting found */
+    
+    start_symbol &= 0x3fff;
+
+    if(start_symbol == 0x0d09 || start_symbol == 0x0d21 || start_symbol == 0x0d39)
+    {
+      ctx->codepos = 0;
+      ctx->codebuf[ctx->codepos++] = code_symbols[(start_symbol >> 2) & 0x1ff];
+
+      /* Perhaps we found a code! */
+      rc = minrc(rc, r128_read_code(ctx, line, w, ppos - uwidth, uwidth, threshold));
+
+      /* Have we succeeded? */
+      if(R128_ISDONE(ctx, rc)) return rc;      
+    }
+    
+    /* Go back a little and try again */
+    ppos -= uwidth * 6;
   }
   
   return rc;
 }
 
-void help(char *progname, int verbosity)
-{
-  if(!verbosity)
-  {
-    printf(
-      "rapid128 barcode scanner, (c) 2015 Mateusz 'mteg' Golicz\n"
-      "Usage: %s [options] <file1> [<file2> [<file3> ...]]\n"
-      "\n"
-      "Available options:\n"
-      " -w <pixels> Minimum unit width to consider\n"
-      " -W <pixels> Maximum unit width to consider\n"
-      " -H <pixels> Minimum expected barcode height\n",
-      progname
-    );
-  }
-  else
-  {
-  }
-}
 
 #define R128_MARGIN_CLASS(c, val) ((val) >= (c)->margin_high_threshold ? 1 : ((val) <= (c)->margin_low_threshold ? -1 : 0))
 
@@ -301,28 +345,29 @@ struct r128_line *r128_get_line(struct r128_ctx *ctx, struct r128_image *im, int
   u_int8_t *data;
   int len, start = 0;
   
-  if(im->lines[line].gray_data) return &im->lines[line];
+  if(im->lines[line].offset != 0xffffffff) return &im->lines[line];
   
-  data = im->gray_data + line * ctx->width;
+  data = im->gray_data;
 
-  start = 0;
+  start = line * ctx->width;
   len = ctx->width;
   
-  if((min_len >= max_gap) && 0)
+  if((min_len >= max_gap) && (!(ctx->flags & R128_FL_NOCROP)))
   {
     int prev_so_far = R128_MARGIN_CLASS(ctx, data[min_len - max_gap]);
     int so_far, gap;
     
     /* Left margin */
     for(gap = 1; prev_so_far && (gap + min_len - max_gap)<len; prev_so_far = so_far, gap++)
-      if((so_far = R128_MARGIN_CLASS(ctx, data[gap + min_len - max_gap])) != prev_so_far)
+      if((so_far = R128_MARGIN_CLASS(ctx, data[start + gap + min_len - max_gap])) != prev_so_far)
         break;
     
     /* Indeed a gap! */
     if(gap > max_gap)
     {
-      start = gap + min_len - max_gap;
-      len -= start;
+      gap += min_len - max_gap;
+      start += gap;
+      len -= gap;
     }
     
     /* Right margin */
@@ -343,7 +388,7 @@ struct r128_line *r128_get_line(struct r128_ctx *ctx, struct r128_image *im, int
   if(len < min_len) len = 0;
   r128_log(ctx, R128_DEBUG2, "Prepared line %d of image %p: start = %d, len = %d\n", line, im, start, len);
 
-  im->lines[line].gray_data = data + start;
+  im->lines[line].offset = start;
   im->lines[line].linesize = len;
   
   return &im->lines[line];
@@ -383,8 +428,8 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
   max_ctr = log2_ceil(ctx->height / minheight);
   
   ctx->page_scan_id++;
-  r128_log(ctx, R128_DEBUG1, "Page scan # %d starts: offs = %.3f, th = %.2f, heights = %d ~ %d, uwidth = %.2f\n", 
-        ctx->page_scan_id, offset, ctx->threshold, minheight, maxheight, uwidth);
+  r128_log(ctx, R128_DEBUG1, "Page scan # %d of img %s starts: offs = %.3f, th = %.2f, heights = %d ~ %d, uwidth = %.2f\n", 
+        ctx->page_scan_id, img->filename, offset, ctx->threshold, minheight, maxheight, uwidth);
   
   /* Do a BFS scan of page lines @ particular offset and unit width */
   for(ctr = min_ctr; ctr < max_ctr; ctr++)
@@ -399,7 +444,7 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
     ctx->line_scan_status[line_idx] = ctx->page_scan_id;
 
     /* Check the line */
-    rc = minrc(rc, r128_scan_line(ctx, r128_get_line(ctx, img, line_idx), uwidth, offset, ctx->threshold));
+    rc = minrc(rc, r128_scan_line(ctx, img, r128_get_line(ctx, img, line_idx), uwidth, offset, ctx->threshold));
     
     /* Increment scanned lines counter */
     lines_scanned ++;
@@ -420,7 +465,7 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
 void r128_alloc_lines(struct r128_ctx *ctx, struct r128_image *i)
 {
   assert((i->lines = (struct r128_line*) malloc(sizeof(struct r128_line) * ctx->height)));
-  memset(i->lines, 0, sizeof(struct r128_line) * ctx->height);
+  memset(i->lines, 0xff, sizeof(struct r128_line) * ctx->height);
 }
 
 struct r128_image * r128_blur_image(struct r128_ctx * ctx)
@@ -553,20 +598,6 @@ int r128_try_strategy(struct r128_ctx *ctx, char *strategy)
   return rc;
 }
 
-void r128_defaults(struct r128_ctx *c)
-{
-  memset(c, 0, sizeof(struct r128_ctx));
-  c->strategy = "IHWO@0.5,iHWO,IHWo,iHWo,IHwO,iHwO,IHwo,iHwo,IhWO,ihWO,IhWo,ihWo,IhwO,ihwO,Ihwo,ihwo";
-  c->min_uwidth = 0.9;
-  c->max_uwidth = 4;
-  c->threshold = 0.5;
-  c->margin_low_threshold = 20;
-  c->margin_high_threshold = 235;
-  c->min_cuw_delta2 = 2;
-  c->min_cuw_delta1 = 10;
-  c->expected_min_height = 8;
-  c->blurring_height = 4;
-}
 
 void r128_alloc_buffers(struct r128_ctx *c)
 {
@@ -611,27 +642,171 @@ struct r128_image * r128_read_pgm(struct r128_ctx *c, FILE *fh)
   return r;
 }
 
+
+inline static double floatopt(struct r128_ctx *ctx, char *opt, char *val)
+{
+  double res;
+  char *eptr;
+  res = strtod(val, &eptr);
+  if(*eptr)
+    r128_fail(ctx, "Invalid value for %s: %s\n", opt, val);
+  return res;
+}
+
+inline static int intopt(struct r128_ctx *ctx, char *opt, char *val)
+{
+  int res;
+  char *eptr;
+  res = strtol(val, &eptr, 0);
+  if(*eptr)
+    r128_fail(ctx, "Invalid value for %s: %s\n", opt, val);
+  return res;
+}
+
+void r128_defaults(struct r128_ctx *c)
+{
+  memset(c, 0, sizeof(struct r128_ctx));
+  c->strategy = "IHWO@0.7,iHWO,IHWo,iHWo,IHwO,iHwO,IHwo,iHwo,IhWO,ihWO,IhWo,ihWo,IhwO,ihwO,Ihwo,ihwo";
+  c->min_uwidth = 0.9;
+  c->max_uwidth = 4;
+  c->threshold = 0.5;
+  c->margin_low_threshold = 20;
+  c->margin_high_threshold = 235;
+  c->min_cuw_delta2 = 2;
+  c->min_cuw_delta1 = 10;
+  c->expected_min_height = 8;
+  c->blurring_height = 4;
+  c->temp_prefix = "r128temp";
+  c->batch_size = 1;
+
+  c->code_alloc = 128;
+  asset((c->codebuf = (int*) r128_malloc(c->code_alloc * sizeof(int))));
+}
+
+int help(char *progname, int verbosity)
+{
+  printf("rapid128 barcode scanner, (c) 2015 Mateusz 'mteg' Golicz\n");
+  printf("Usage: %s [options] <file1> [<file2> [<file3> ...]]\n", progname);
+  printf("\n");
+  printf("Available options:\n");
+  printf(" -h         Print help and quit\n");
+  printf(" -hh        Print extended help and quit\n");
+  printf("Available options:\n");
+  printf("BASIC SCANNER PARAMETERS\n");
+  printf(" -wa <pix>  Minimum expected width of thinnest bar in pixels\n");
+  printf(" -wb <pix>  Maximum expected width of thinnest bar in pixels\n");
+  printf(" -mh <lvl>  High (white) threshold for cutting margins\n");
+  printf(" -ml <lvl>  Low (black) threshold for cutting margins\n");
+  printf("\n");
+  printf("PERFORMANCE TUNING\n");
+  printf(" -ch <pix>  Expected minimal code height\n");
+  printf(" -bh <pix>  Blurring height\n");
+  printf(" -s  <strg> Configure scanning strategy\n"); 
+  printf("\n");
+  printf("BATCH PROCESSING\n");
+  printf(" -bs <cnt>  Batch size - number of files processed at once\n");
+  printf(" -bt <secs> Time limit for each batch\n");
+  printf("\n");
+  printf("FILE INPUT\n");
+  printf(" -lc <cmd>  Set loader command (spacebar + file name is appended at the end)\n");
+  printf(" -lt <secs> Time limit for the loader command\n");
+  printf("\n");
+  printf("MEMORY MANAGEMENT\n");
+  printf(" -mm        Save RAM: write to temporary files and mmap() everything\n");
+  printf(" -mp <pfx>  Prefix for temporary files (NNNNNN.pgm is appended)\n"); 
+  printf(" -ma        Never mmap() anything, load all into RAM\n");
+  printf("\n");
+  printf("REPORTING AND DEBUGGING\n");
+  printf(" -a         Continue scanning the document even after a valid code is found.\n");
+  printf(" -e         Extended reporting: print file name, time spent, best result, code symbols.\n");
+  printf(" -v         Increase out-of-band verbosity level\n");
+  printf(" -q         Decrease out-of-band verbosity level\n");
+  printf(" -nd        Do not delete temporary files (use with -mm)\n");
+  printf(" -nm        Do not crop lines\n");
+  return 0;
+}
+
+
 int main(int argc, char ** argv)
 {
   FILE *fh;
   struct r128_ctx ctx;
   int c, nh = 0;
 
+  clock_gettime(CLOCK_MONOTONIC, &ctx.startup);
   r128_defaults(&ctx);
   
-  while((c = getopt(argc, argv, "hv")) != EOF)
+  while((c = getopt(argc, argv, "abcehlmnqvs:w")) != EOF)
   {
     switch(c)
     {
-      case 'h':
-        help(argv[0], nh++);
+      case 'a': ctx.flags |= R128_FL_READALL; break;
+      case 'b':
+        switch((c = getopt(argc, argv, "h:s:t:")))
+        {
+          case 'h': ctx.blurring_height = intopt(&ctx, "-bh", optarg); break;
+          case 's': ctx.batch_size = intopt(&ctx, "-bs", optarg); break;
+          case 't': ctx.batch_limit = floatopt(&ctx, "-bt", optarg); break;
+          default:  r128_fail(ctx, "Unknown option: -b%c\n", c); break;
+        }
         break;
-      case 'v':
-        ctx.logging_level++;
-        break;        
+      case 'c':
+        switch((c = getopt(argc, argv, "h:")))
+        {
+          case 'h': ctx.expected_min_height = intopt(&ctx, "-ch", optarg); break;
+          default:  r128_fail(ctx, "Unknown option: -c%c\n", c); break;
+        }
+        break;
+      
+      case 'e': ctx.flags |= R128_FL_EREPORT; break;
+      case 'h': nh++; break;
+      case 'l':
+        switch((c = getopt(argc, argv, "c:t:")))
+        {
+          case 'c': asset((ctx.loader = strdup(optarg))); break;
+          case 't': ctx.loader_limit = floatopt(&ctx, "-lt", optarg); break;
+          default:  r128_fail(ctx, "Unknown option: -l%c\n", c); break;
+        }
+        break;
+      case 'm':
+        switch((c = getopt(argc, argv, "map:h:l:")))
+        {
+          case 'm': ctx.flags |= R128_FL_MMAPALL; break;
+          case 'a': ctx.flags |= R128_FL_RAMALL; break;
+          case 'p': assert((ctx.temp_prefix = strdup(optarg)); break;
+          case 'l': ctx.margin_low_threshold = floatarg(&ctx, "-ml", optarg); break;
+          case 'h': ctx.margin_high_threshold = floatopt(&ctx, "-mh", optarg); break;
+          default:  r128_fail(ctx, "Unknown option: -m%c\n", c); break;
+        }
+        break;
+      case 'n':
+        switch((c = getopt(argc, argv, "dm")))
+        {
+          case 'd': ctx.flags |= R128_FL_KEEPTEMPS; break;
+          case 'm': ctx.flags |= R128_FL_NOCROP; break;
+        }
+        break;
+      case 'q': ctx.logging_level--; break;
+      case 'v': ctx.logging_level++; break;        
+      case 's': assert((ctx.strategy = strdup(optarg))); break;
+      case 'w':
+        switch((c = getopt(argc, argv, "a:b:")))
+        {
+          case 'a': ctx.min_uwidth = floatopt(&ctx, "-wa", optarg); break;
+          case 'b': ctx.max_uwidth = floatopt(&ctx, "-wb", optarg); break;
+          default:  r128_fail(ctx, "Unknown option: -w%c\n", c); break;
+        }
+        break;
+      default:
+        r128_fail(ctx, "Unknown option: %c\n", c);
+        break;
     }
   }
-   
+  
+  if(nh)
+    return help(argv[0], nh);
+  
+  
   if(!argv[optind])
   {
     fprintf(stderr, "Usage: read128 <file name>.pgm\n");

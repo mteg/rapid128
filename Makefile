@@ -1,9 +1,9 @@
 CC	= gcc 
 CFLAGS  = -O2 -Wall -D_GNU_SOURCE
 
-SOURCES	= read128.c codetree2.c codetabs.c
+SOURCES	= rapid128.c codetree2.c codetabs.c
 OBJECTS	= ${SOURCES:.c=.o}
-OUT	= read128
+OUT	= rapid128
 LIBS	= -lm
 
 all: $(OUT)
