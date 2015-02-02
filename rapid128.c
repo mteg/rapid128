@@ -6,7 +6,10 @@
 #include <stdarg.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
 #include <unistd.h>
+#include <ctype.h>
 #include "read128.h"
 
 static inline int minrc(int a, int b)
@@ -29,15 +32,19 @@ struct r128_image * err(char *msg)
 extern char code_symbols[];
 extern char ** code_tables[];
 
-inline static void r128_log(struct r128_ctx *ctx, int level, char *fmt, ...)
+inline int r128_log_return(struct r128_ctx *ctx, int level, int rc, char *fmt, ...)
 {
   va_list ap;
-  if(level > ctx->logging_level) return;
+  if(level > ctx->logging_level) return rc;
   
   va_start(ap, fmt);  
   vfprintf(stderr, fmt, ap);
   va_end(ap);
+  
+  return rc;
 }
+
+#define r128_log(ctx, level, fmt, ...) r128_log_return(ctx, level, 0, ##fmt)
 
 inline static void r128_fail(struct r128_ctx *ctx, char *fmt, ...)
 {
@@ -85,10 +92,26 @@ void *r128_zalloc(struct r128_ctx *ctx, int size)
 }
 
 
-int r128_report_code(struct r128_ctx *ctx, char *code, int len)
+int r128_report_code(struct r128_ctx *ctx, struct r128_image *img, char *code, int len)
 {
-  code[len] = 0;
-  printf("%s\n", code);
+  
+  if(ctx->flags & R128_FL_EREPORT)
+  {
+    int i;
+    printf("%s:%s:%s", img->root ? img->root->filename : img->filename, img->time_spent, r128_strerror(img->best_rc));
+    for(i = 0; i<img->bestcode_len; i++)
+      printf("%c%d", i ? ' ' : ':', img->bestcode[i]);
+    printf(":");
+  }
+  
+  if(code)
+  {
+    code[len] = 0;
+    printf("%s\n", code);
+  }
+  else
+    printf("\n");
+    
   return R128_EC_SUCCESS;
 }
 
@@ -102,7 +125,7 @@ int r128_cksum(int *symbols, int len)
   return wsum % 103;
 }
 
-int r128_parse(struct r128_ctx *ctx, int *symbols, int len)
+int r128_parse(struct r128_ctx *ctx, struct r128_image *img, int *symbols, int len)
 {
   int table = 0, i;
   char outbuf[1024];
@@ -136,7 +159,7 @@ int r128_parse(struct r128_ctx *ctx, int *symbols, int len)
     else if(c == 101 && table != 0)
       table = 0; /* CODE A */
     else if(c == 106)
-      return r128_report_code(ctx, outbuf, ppos);
+      return r128_report_code(ctx, img, outbuf, ppos);
     else if(c < 0 && c > 105)
       nb = sprintf(outbuf + pos, " - ?? %d ?? - ", c); 
     else
@@ -211,14 +234,28 @@ u_int32_t r128_read_bits(struct r128_ctx *ctx, u_int8_t *line, int w, double ppo
   return res;
 }
 
-int r128_read_code(struct r128_ctx *ctx, u_int8_t *line, int w, double ppos, double uwidth, double threshold)
+void r128_update_best_code(struct r128_ctx *ctx, struct r128_image *im, u_int8_t *symbols, int len)
+{
+  if(im->bestcode_len > len) return;
+  if(im->bestcode_alloc < len)
+  {
+    while(im->bestcode_alloc < len)
+      im->bestcode_alloc *= 2;
+    im->bestcode = (u_int8_t*) r128_realloc(im->bestcode, im->bestcode_alloc);
+  }
+  
+  memcpy(im->bestcode, symbols, len);
+  im->bestcode_len = len;
+}
+
+
+int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *line, int w, double ppos, double uwidth, double threshold)
 {
   int rc = R128_EC_NOEND;
   int i_thresh = lrint(threshold / uwidth);
   static double weights[] = {1.0, 1.02, 0.98, 1.01, 0.99};
   double new_ppos;
   
-  fprintf(stderr, "[%d] ", ctx->codebuf[0]);
   while(lrint(ceil(ppos + 5*uwidth)) < w) 
   {
     int i, cs, i_ppos, offset;
@@ -255,10 +292,9 @@ int r128_read_code(struct r128_ctx *ctx, u_int8_t *line, int w, double ppos, dou
     
       if(!((code & 2) || (!(code & 1)) || (!(code & 0x800)) || (code & 0x1000) || cs == -1))
         break;
-      else
       {
-        int i;
-        fprintf(stderr, " ER");
+//        int i;
+//        fprintf(stderr, " ER");
 //        for(i = 12; i>=0; i--)
 //          fprintf(stderr, ((code >> i) & 0x1) ? "1" : "0");
       }
@@ -267,6 +303,7 @@ int r128_read_code(struct r128_ctx *ctx, u_int8_t *line, int w, double ppos, dou
     if(i == 5)
     {
         fprintf(stderr, "\n");
+        r128_update_best_code(ctx, im, ctx->codebuf, ctx->codepos);
         return R128_EC_SYNTAX; 
     }
     
@@ -281,9 +318,11 @@ int r128_read_code(struct r128_ctx *ctx, u_int8_t *line, int w, double ppos, dou
     
     fprintf(stderr, "[%d] ", cs); 
     if(cs == 106)
+    {
+      r128_update_best_code(ctx, im, ctx->codebuf, ctx->codepos);
       /* Proper STOP! */
-      return r128_parse(ctx, ctx->codebuf, ctx->codepos);
-    
+      return r128_parse(ctx, im, ctx->codebuf, ctx->codepos);
+    }
     ppos = new_ppos - uwidth;
   }
   
@@ -323,10 +362,11 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
       ctx->codebuf[ctx->codepos++] = code_symbols[(start_symbol >> 2) & 0x1ff];
 
       /* Perhaps we found a code! */
-      rc = minrc(rc, r128_read_code(ctx, line, w, ppos - uwidth, uwidth, threshold));
+      rc = minrc(rc, r128_read_code(ctx, im, line, w, ppos - uwidth, uwidth, threshold));
 
       /* Have we succeeded? */
-      if(R128_ISDONE(ctx, rc)) return rc;      
+      if(R128_ISDONE(ctx, rc)) 
+        return rc;
     }
     
     /* Go back a little and try again */
@@ -421,11 +461,13 @@ static inline int log2_ceil(int val)
 int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
           double offset, double uwidth, int minheight, int maxheight)
 {
-  int rc = R128_EC_NOTHING;
   int min_ctr, max_ctr, ctr, lines_scanned = 0;
+  double t_start = r128_time(ctx);
   
-  min_ctr = log2_ceil(ctx->height / maxheight);
-  max_ctr = log2_ceil(ctx->height / minheight);
+  if(maxheight > im->height) maxheight = im->height;
+  
+  min_ctr = log2_ceil(im->height / maxheight);
+  max_ctr = log2_ceil(im->height / minheight);
   
   ctx->page_scan_id++;
   r128_log(ctx, R128_DEBUG1, "Page scan # %d of img %s starts: offs = %.3f, th = %.2f, heights = %d ~ %d, uwidth = %.2f\n", 
@@ -444,46 +486,50 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
     ctx->line_scan_status[line_idx] = ctx->page_scan_id;
 
     /* Check the line */
-    rc = minrc(rc, r128_scan_line(ctx, img, r128_get_line(ctx, img, line_idx), uwidth, offset, ctx->threshold));
+    im->best_rc = minrc(im->best_rc, r128_scan_line(ctx, img, r128_get_line(ctx, img, line_idx), uwidth, offset, ctx->threshold));
     
     /* Increment scanned lines counter */
     lines_scanned ++;
     
     /* If we found anything, maybe we can immediately quit? */
-    if(R128_ISDONE(ctx, rc))
+    if(R128_ISDONE(ctx, im->best_rc))
     {
       r128_log(ctx, R128_NOTICE, "Code was found in page scan # %d, offs = %.3f, th = %.2f, heights = %d ~ %d, uwidth = %.2f, line = %d\n", 
             ctx->page_scan_id, offset, ctx->threshold, minheight, maxheight, uwidth, line_idx);
+      img->time_spent += r128_time(ctx) - t_start;
       return rc;
     }
   }
   r128_log(ctx, R128_DEBUG1, "Page scan %d finished, scanned %d lines, best rc = %d\n", ctx->page_scan_id, lines_scanned, rc);
+  img->time_spent += r128_time(ctx) - t_start;
 
   return rc;
 }
 
 void r128_alloc_lines(struct r128_ctx *ctx, struct r128_image *i)
 {
-  assert((i->lines = (struct r128_line*) malloc(sizeof(struct r128_line) * ctx->height)));
-  memset(i->lines, 0xff, sizeof(struct r128_line) * ctx->height);
+  assert((i->lines = (struct r128_line*) malloc(sizeof(struct r128_line) * i->height)));
+  memset(i->lines, 0xff, sizeof(struct r128_line) * i->height);
 }
 
-struct r128_image * r128_blur_image(struct r128_ctx * ctx)
+struct r128_image * r128_blur_image(struct r128_ctx * ctx, int n)
 {
   struct r128_image *i;
+  struct r128_image *src = &ctx->im[n];
+  
   int *accu;
   int x, y, bh = ctx->blurring_height;
   u_int8_t *minus_line = ctx->im->gray_data, *plus_line = ctx->im->gray_data;
   u_int8_t *result;
   
-  if(ctx->im_blurred) return ctx->im_blurred;
+  if(ctx->im_blurred[n].gray_data) return &ctx->im_blurred[n];
 
-  r128_log(ctx, R128_DEBUG1, "Preparing a blurred image\n");
-  
-  assert((i = (struct r128_image*) malloc(sizeof(struct r128_image))));
-  memset(i, 0, sizeof(struct r128_image));
+#warning todo tempnam this as well
+  r128_log(ctx, R128_DEBUG1, "Preparing a blurred image for %s\n", src->filename);
   
   assert((result = i->gray_data = (u_int8_t*) malloc(ctx->width * ctx->height)));
+  i->width = src->width;
+  i->height = src->height;
   r128_alloc_lines(ctx, i);
 
   assert((accu = (int*) malloc(sizeof(int) * ctx->width)));
@@ -507,19 +553,15 @@ struct r128_image * r128_blur_image(struct r128_ctx * ctx)
   return i;  
 }
 
-int r128_try_tactics(struct r128_ctx *ctx, char *tactics)
+int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, int codes_to_find)
 {
   static double offsets[] = {0, 0.5, 0.25, 0.75, 0.125, 0.375, 0.625, 0.875};
   int w_ctr_min = 1, w_ctr_max = ctx->wctrmax_stage1, w_ctr;
   int offs, offs_min = 0, offs_max = 4;
-  int h_min = ctx->expected_min_height, h_max = ctx->height;
+  int h_min = ctx->expected_min_height, h_max = ctx->max_height;
   char *thresh_input;
 
-  struct r128_image *img = ctx->im; 
-  int rc = R128_EC_NOTHING;
-  
-  if(strstr(tactics, "i"))
-    img = r128_blur_image(ctx);
+  int codes_found = 0;
   
   if(strstr(tactics, "o")) { offs_min = 4; offs_max = 8; }
   if(strstr(tactics, "h")) { h_min = 1; h_max = ctx->expected_min_height; }
@@ -527,30 +569,53 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics)
 
   if((thresh_input = strstr(tactics, "@")))
     if(sscanf(thresh_input + 1, "%lf", &ctx->threshold) != 1)
-      r128_log(ctx, R128_NOTICE, "Invalid threshold in tactics: '%s', ignoring.\n", tactics);
+      r128_log(ctx, R128_NOTICE, "Invalid threshold in tactics: '%s', keeping to old threshold, equal %.2f.\n", tactics, ctx->threshold);
 
   r128_log(ctx, R128_DEBUG1, "Now assuming tactics '%s'\n", tactics);
-  for(offs = offs_min; offs < offs_max; offs++)
+  
+  for(offs = offs_min; offs < offs_max && codes_found < codes_to_find; offs++)
     for(w_ctr = w_ctr_min; w_ctr < w_ctr_max; w_ctr++)
     {
       /* First, determine document width in code units for this try */
       double cuw = ctx->min_doc_cuw + ctx->doc_cuw_span * bfsguidance(w_ctr) / 65536.0;
-
-      /* Determine unit width to act with for this w_ctr */
-      double uwidth = ((double) ctx->width) / cuw;
+      int i;
       
-      rc = minrc(rc, r128_page_scan(ctx, img, offsets[offs], uwidth, h_min, h_max));
-      if(R128_ISDONE(ctx, rc))
-        return rc;
+      /* For all images */
+      for(i = 0; i<len; i++)
+      {
+        /* Get image */
+        struct r128_image *img = &ctx->im_blurred[start + i];
+
+        /* Determine unit width to act with for this w_ctr */
+        double uwidth = ((double) im->width) / cuw;
+      
+        /* Check if we can do anything */
+        if(!im->gray_data) continue;
+        if(uwidth < ctx->min_uwidth || uwidth > ctx->max_uwidth) continue;
+        
+        if(strstr(tactics, "i"))
+          img = r128_blur_image(ctx, start + i);
+      
+        if(r128_page_scan(ctx, img, offsets[offs], uwidth, h_min, h_max) == R128_EC_SUCCESS)
+        {
+          codes_found++;
+          if(!(ctx->flags & R128_FL_READALL))
+          {
+            r128_free_image(&ctx->im[start + i]);
+            r128_free_image(&ctx->im_blurred[start + i]);            
+          }
+        }
+      }
+      if(codes_found >= codes_to_find) break;
     }
   
-  r128_log(ctx, R128_DEBUG2, "Best result for tactics '%s': %d\n", tactics, rc);
+  r128_log(ctx, R128_DEBUG2, "Finishing tactics '%s': %d of %d codes found\n", tactics, codes_found, codes_to_find);
   return rc;
 }
 
-int r128_try_strategy(struct r128_ctx *ctx, char *strategy)
+int r128_run_strategy(struct r128_ctx *ctx, char *strategy, int start, int len)
 {
-  int rc = R128_EC_NOTHING;
+  int codes_found = 0, codes_to_find = 0, i; 
   
   assert((strategy = strdup(strategy)));
 
@@ -575,8 +640,10 @@ int r128_try_strategy(struct r128_ctx *ctx, char *strategy)
   /* Precompute data for unit width search */
   
   /* Minimum codeunit width of document is? */
-  ctx->min_doc_cuw = ((double) ctx->width) / ctx->max_uwidth;
-  ctx->max_doc_cuw = ((double) ctx->width) / ctx->min_uwidth;
+
+#warning think a while!
+  ctx->min_doc_cuw = ((double) ctx->min_width) / ctx->max_uwidth;
+  ctx->max_doc_cuw = ((double) ctx->max_width) / ctx->min_uwidth;
   
   /* Therefore, we span a range of...? */
   ctx->doc_cuw_span = ctx->max_doc_cuw - ctx->min_doc_cuw;
@@ -585,63 +652,557 @@ int r128_try_strategy(struct r128_ctx *ctx, char *strategy)
   ctx->wctrmax_stage1 = log2_ceil(lrint(ctx->doc_cuw_span / ctx->min_cuw_delta1));
   ctx->wctrmax_stage2 = log2_ceil(lrint(ctx->doc_cuw_span / ctx->min_cuw_delta2));
   
-  while(strategy)
+  /* Compute # of codes to find */
+  for(i = 0; i<len; i++)
+    if(ctx->im[start + i].gray_data)
+      codes_to_find++;
+  
+  while(strategy && codes_found < codes_to_find)
   {
     char *next_strategy = index(strategy, ',');
+    
     if(next_strategy) *(next_strategy++) = 0;
-    rc = minrc(rc, r128_try_tactics(ctx, strategy));
-    if(R128_ISDONE(ctx, rc))
-      return rc;
+    codes_found += r128_try_tactics(ctx, strategy, start, len, codes_to_find - codes_found);
     strategy = next_strategy;
   }
-  r128_log(ctx, R128_DEBUG2, "Giving up. Best result is %d\n", rc);
+  if(ctx->flags & R128_FL_EREPORT)
+    for(i = 0; i<len; i++)
+      if(ctx->im[start + i].best_rc != R128_RC_SUCCESS)
+        r128_report_code(c, &ctx->im[start + i], NULL, 0); 
+
+  r128_log(ctx, R128_DEBUG2, "Giving up a batch strategy run, found %d of %d codes.\n", codes_found, codes_to_find);
+  return codes_found;
+}
+
+
+void r128_realloc_buffers(struct r128_ctx *c)
+{
+  if(c->line_scan_alloc < c->max_height)
+  {
+    c->line_scan_status = r128_realloc(c->line_scan_status, sizeof(int) * c->max_height);
+    memset(c->line_scan_status + c->line_scan_alloc, 0, (c->max_height - line_scan_alloc) * sizeof(int));
+    c->line_scan_alloc = c->max_height;
+  }
+}
+
+const char * r128_strerror(int rc)
+{
+  switch(rc)
+  {
+    case R128_EC_SUCCESS: return "R128_EC_SUCCESS";
+    case R128_EC_CHECKSUM: return "R128_EC_CHECKSUM";
+    case R128_EC_SYNTAX: return "R128_EC_SYNTAX";
+    case R128_EC_NOEND: return "R128_EC_NOEND";
+    case R128_EC_NOCODE: return "R128_EC_NOCODE";
+    case R128_EC_NOLINE: return "R128_EC_NOLINE";
+    case R128_EC_NOIMAGE: return "R128_EC_NOIMAGE";
+    case R128_EC_NOFILE: return "R128_EC_NOFILE";
+    case R128_EC_NOLOADER: return "R128_EC_NOLOADER";
+    default: return "(Unknown)";
+  }
+}
+
+
+void r128_free_image(struct r128_ctx *c, struct r128_image *im)
+{
+  if(im->fd != -1) close(im->fd);
+  r128_free(im->lines);
+  
+  if(im->mmaped)
+    munmap(im->file, im->file_size);
+  else
+    r128_free(im->file);
+  
+  im->fd = -1;
+  im->lines = NULL;
+  im->file = NULL;
+}
+
+
+char * r128_tempnam(struct r128_ctx *c)
+{
+  char *res;
+  int maxname = 16, l = 0;
+  if(c->temp_prefix)
+    maxname += (l = strlen(c->temp_prefix));
+    
+  res = (char*) r128_alloc(c, maxname);
+  if(c->temp_prefix)
+    memcpy(res, c->temp_prefix, l);
+  
+  snprintf(c->temp_prefix, maxname - l, "%08d.pgm", c->last_temp++);
+  
+  return res;
+}
+
+char * skip_to_newline_a(char *ptr, int *len, char *copy_to, int copy_len)
+{
+  while((*len) > 0)
+  {
+    if(iswhite(*ptr)) break;
+    if(copy_len > 0)
+    {
+      *(copy_to++) = *ptr;
+      copy_len--;
+    }
+    ptr++; (*len)--;
+  }
+  
+  if(copy_len) *copy_to = 0;
+  
+  if((*len) > 0) { ptr++; (*len)--; }
+  return ptr;
+}
+
+#define skip_to_newline(ptr, len) skip_to_newline_a(ptr, len, NULL, 0)
+
+char * skip_comments(char *ptr, int *len)
+{
+  while((*len) > 0)
+  {
+    if((*ptr) == '#')
+    {
+      while((*len) > 0)
+      {
+        if(*ptr == '\n') return ptr;
+
+        ptr++;
+        *(len)-- ;        
+      }
+    }
+    else
+      return ptr;
+  }
+  
+  return ptr;
+}
+
+
+void r128_parse_pgm(struct r128_ctx *c, struct r128_image *im, char *filename)
+{
+#define PGM_MAX_LINE 256
+#define PGM_MIN_HEADER 8
+/*
+P1 (3 bytes)
+1 1 (4 bytes)
+. (1 byte)
+*/
+
+  int type = 0, maxval = 255;
+  char line[PGM_MAX_HEADER];
+  char *b = im->file;
+  int len = im->file_size, rc = R128_ERROR_NOIMAGE, explen, as;
+  char *nl;
+  
+  if(!filename) filename = im->filename;
+  
+  b = im->file;
+  len = im->file_size;
+
+  if(len < PGM_MIN_HEADER)
+    return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: file too short.\n", filename);
+  
+  if(b[0] != 'P' && !iswhite(b[2]))
+    return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: file too short.\n", filename);
+  
+  type = b[1] - '0';
+  if(type < 4 || type > 6)
+    return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: image type P%c is not supported.\n", filename, b[1]);
+  
+  b = skip_to_newline(b, &len);
+  b = skip_comments(b, &len);
+  b = skip_to_newline_a(b, &len, line, PGM_MAX_HEADER - 1);
+  if(!len) 
+    return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: invalid header.\n", filename);
+  
+  line[PGM_MAX_HEADER - 1] = 0;
+
+  if(sscanf(line, "%d", &im->width) != 1)
+    return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: invalid header (unreadable width x height).\n", filename);
+
+  b = skip_comments(b, &len);
+  b = skip_to_newline_a(b, &len, line, PGM_MAX_HEADER - 1);
+
+  if(sscanf(line, "%d", &im->height) != 1)
+    return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: invalid header (unreadable width x height).\n", filename);
+  
+  if(im->width < 1 || im->height < 1 || im->width > 65535 || im->height > 65536)
+    return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: unsupported image size %d x %d.\n", filename, im->width, im->height);
+  
+  b = skip_comments(b, &len);
+  b = skip_to_newline_a(b, &len, line, PGM_MAX_HEADER - 1);
+
+  if(!len) 
+    return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: invalid header.\n", filename);
+
+  if(sscanf(line, "%d", &maxval) != 1)
+    return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: invalid range.\n", filename);
+  
+  if(maxval < 1 || maxval > 255)
+    return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: unsupported pixel value range %d.\n", filename, maxval);
+  
+  explen = im->width * im->height;
+  if(type == 4) explen = explen / 8;
+  if(type == 6) explen *= 3;
+  
+  if(len < explen)
+    return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: file is truncated (remaining %d, we need %d).\n", filename, len, explen);
+  
+  
+  if(type == 5 || type == 6 || maxval != 255) /* Needs processing */
+  {
+    int pix, pixcnt = im->width * im->height;
+    u_int8_t *data = NULL;
+    u_int8_t *line = NULL;
+    u_int8_t *res = NULL;
+    int fd, x = 0, cr = 0;
+    char *tempnam;
+    
+    if(c->flags & R128_FL_MMAPALL)
+    {
+      char pgmhdr[256];
+      int l;
+
+      /* Mmap mode */
+      tempnam = r128_tempnam(c);
+      
+      if((fd = open(tempnam, O_WRONLY | O_TRUNC)) < 0)
+      {
+        free(tempnam);
+        return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: Cannot open temporary file %s to store conversion result, open(): %s.\n", filename, tempnam, strerror(errno));
+      }
+
+      
+      line = r128_malloc(im->width);
+      l = snprintf(pgmhdr, 256, "P5\n%d %d\n255\n", im->width, im->heigth);
+      if(write(fd, pgmhdr, l) != l);
+      {
+        free(line); free(tempnam); close(fd);
+        return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: Cannot write PGM header to temporary file %s to store conversion result, write(): %s.\n", filename, tempnam, strerror(errno));
+      }
+    }
+    else
+      /* RAM mode */
+      data = line = r128_malloc(im->width * im->height);
+
+    for(pix = 0; ; pix++)
+    {
+      if(x >= im->width)
+      {
+        /* Line is finished */
+        if(c->flags & R128_FL_MMAPALL)
+        {
+          /* Save this line */
+          if(write(fd, line, im->width) != im->width)
+          {
+            free(line); free(tempnam); close(fd);
+            return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: Cannot write to temporary file %s to store conversion result, write(): %s.\n", filename, tempnam, strerror(errno));
+          }
+        }
+        else
+          /* Continue writing to RAM */
+          line += im->width;
+
+        x = 0;
+      }
+      if(pix > pixcnt) break;
+      switch(type)
+      {
+        case 4:
+          if((x & 7) == 0)
+            cr = *(b++);
+          line[x++] = (cr & 0x80) ? 255 : 0;
+          cr >>= 1;
+          break;
+        case 5: line[x++] = *(b++) * 255 / maxval; break;
+        case 6: line[x++] = (*(b++) + *(b++) + *(b++)) / 3; break;
+      }
+    }
+    
+    r128_free_image(c, im);
+    
+    if(c->flags & R128_FL_MMAPALL)
+    {
+      int rc;
+      /* Mmap mode */
+      close(fd);
+      free(line);
+      
+      rc = r128_load_pgm(c, im, tempnam);
+      free(tempnam);
+      
+      return rc;
+    }
+    else
+    {
+      free(im->file);
+      im->file = data;
+      im->gray_data = data;
+    }
+  }
+  else
+    im->gray_data = b;
+
+  im->lines = (struct r128_line*) r128_alloc(as = sizeof(struct r128_line) * im->height);
+  memset(im->lines, 0xff, as);
+  
+  return r128_log_return(c, R128_DEBUG1, R128_RC_NOIMAGE - 1, "Successfuly parsed PGM file %s (%d x %d, P5, 255)\n", filename, im->width, im->height);
+}
+
+int r128_load_pgm(struct r128_ctx *c, struct r128_image *im, char *filename)
+{
+  int rc;
+  
+  r128_log(c, R128_DEBUG1, "Reading file %s.\n", filename);
+  if((im->fd = open(filename, O_RDONLY)) == -1)
+    return r128_log_return(c, R128_ERROR, R128_EC_NOFILE, "Cannot read file %s: open(): %s\n", filename, strerror(errno));
+    
+  if(c->flags & R128_FL_RAMALL)
+  {
+    int alloc_len = R128_ALLOC_STEP;
+    im->file = (char*) r128_malloc(alloc_len);
+    
+    while((rc = read(im->fd, im->file + im->file_size, alloc_len - im->file_size)) > 0)
+    {
+      im->file_size += rc;
+      if(im->file_size == alloc_len)
+      {
+        alloc_len += R128_ALLOC_STEP;
+        im->file = (char*) r128_realloc(im->file, alloc_len);
+      }
+    }
+    
+    if(rc == -1)
+    {
+      close(im->fd);
+      r128_free(im->file);
+      r128_log(c, R128_ERROR, "Cannot load file %s: read(): %s\n", filename, strerror(errno));
+      return R128_EC_NOFILE;
+    }
+    r128_log(c, R128_DEBUG1, "Successfully loaded file %s into RAM.\n", filename);
+  }
+  else
+  {
+    struct stat *s;
+    if(fstat(im->fd, &s) == -1)
+    {
+      close(im->fd);
+      r128_log(c, R128_ERROR, "Cannot mmap file %s: stat(): %s\n", filename, strerror(errno));
+      return R128_EC_NOFILE;
+    }
+    
+    if((im->file = mmap(NULL, im->file_size = s.st_size, PROT_READ, MAP_SHARED, fd, 0)) == MAP_FAILED)
+    {
+      im->file = NULL;
+      close(im->fd);
+      r128_log(c, R128_ERROR, "Cannot mmap file %s: mmap(): %s\n", filename, strerror(errno));
+      return R128_EC_NOFILE;
+    }
+    im->mmaped = 1;
+    r128_log(c, R128_DEBUG1, "Successfully mmap()ed file %s.\n", filename); 
+  }
+  
+  if((rc = r128_parse_pgm(c, im, filename)) >= R128_RC_NOIMAGE)
+    r128_free_image(c, im);
+
   return rc;
 }
 
-
-void r128_alloc_buffers(struct r128_ctx *c)
+int r128_load_file(struct r128_ctx *c, struct r128_image *im)
 {
-  assert((c->line_scan_status = (int*) malloc(sizeof(int) * c->height)));
-  memset(c->line_scan_status, 0, sizeof(int) * c->height);
+  double t_start;
+  int childpid, readerror = 0, maxfd;
+  int sp_stdout[2];
+  int sp_stderr[2];
+  char *data;
+  int alloc_size = R128_READ_STEP;
+  static char stderr_buf[1024];
+  char *tempnam;
+  int fd;
+  
+  if(!c->loader)
+    return r128_load_pgm(c, im, im->filename);
+
+  /* assume it'll be okay! */
+  data = (char*) r128_malloc(alloc_size);
+  if(c->flags & R128_FL_MMAPALL)
+  {
+    tempnam = r128_tempnam(c);
+
+    if((fd = open(tempnam, O_WRONLY | O_TRUNC)) < 0)
+    {
+      free(tempnamp);
+      return r128_log_return(c, R128_ERROR, rc, "Cannot load file %s: Cannot open temporary file %s to store loader result, open(): %s.\n", im->filename, tempnam, strerror(errno));
+    }
+  }
+  
+  if(socketpair(AF_LOCAL, 0, 0, &sp_stdout) == -1)
+      return r128_log_return(c, R128_ERROR, R128_EC_NOLOADER, "Cannot start loader for file %s: socketpair(): %s\n", im->filename, strerror(errno));
+
+  if(socketpair(AF_LOCAL, 0, 0, &sp_stderr) == -1)
+      return r128_log_return(c, R128_ERROR, R128_EC_NOLOADER, "Cannot start loader for file %s: socketpair(): %s\n", im->filename, strerror(errno));
+  
+  t_start = r128_time(c);
+  switch((childpid = fork()))
+  {
+    case -1:
+      return r128_log_return(c, R128_ERROR, R128_EC_NOLOADER, "Cannot start loader for file %s: fork(): %s\n", im->filename, strerror(errno));
+
+    case 0:
+    {
+      char *args[4] = {"/bin/sh", "-c", NULL, NULL};
+      char *cmdstr;
+      int i, l, pos;
+      
+      close(sp_stdout[0]);
+      close(sp_stderr[0]);
+      dup2(1, sp_stdout[1]);
+      dup2(2, sp_stderr[2]);
+      
+      cmdstr = r128_alloc(c, (pos = strlen(c->loader)) + (l = strlen(im->filename)) * 5 + 16);
+      memcpy(cmdstr, c->loader, pos);
+      pos += sprintf(cmdstr + pos, " '");
+      for(i = 0; i<l; i++)
+        if(im->filename[i] == '\'')
+        {
+          cmdstr[pos++] = '\'';
+          cmdstr[pos++] = '"';
+          cmdstr[pos++] = '\'';
+          cmdstr[pos++] = '"';
+          cmdstr[pos++] = '\'';
+        }
+        else	
+          cmdstr[pos++] = im->filename[i];
+      
+      cmdstr[pos++] = '\'';
+      cmdstr[pos] = 0;
+      args[2] = cmdstr;
+      
+      execv(args[0], args); 
+      r128_fail(c, "Cannot start loader for file %s: execv(): %s\n", im->filename, strerror(errno));
+      break;
+    }  
+
+    default:
+      close(sp_stdout[1]);
+      close(sp_stderr[1]);
+      break;
+  }
+  
+
+  /* Read data */
+  maxfd = sp_stderr[1];
+  if(sp_stdout[1] > maxfd) maxfd = sp_stdout[1];
+  
+  while(1)
+  {
+    fd_set fds;
+    struct timeval tv;
+
+    tv.tv_sec = 0;
+    tv.tv_usec = 200000;
+    
+    FD_ZERO(&fds);
+
+    FD_SET(sp_stderr[1], &fds);
+    FD_SET(sp_stdout[1], &fds);
+
+    if(select(maxfd + 1, &fds, NULL, NULL, &tv) < 0)
+    {
+      if(errno != EINTR)
+      {
+        r128_log(c, LOG_ERROR, "Cannot proceed with loading file %s from loader: select(): %s\n", im->filename, strerror(errno));
+        break;
+      }
+    }
+    
+    if(FD_ISSET(sp_stdout[1], &fds))
+    {
+      int l = read(sp_stdout[1], data + im->file_size, alloc_size - im->file_size);
+      if(l < 0)
+      {
+        r128_log(c, LOG_ERROR, "Cannot proceed with loading file %s from loader: read(stdout): %s\n", im->filename, strerror(errno));
+        break;
+      }
+      else if(l > 0)
+      {
+        im->file_size += l;
+        if(alloc_size == im->file_size)
+        {
+          if(c->flags & R128_FL_MMAPALL)
+          {
+            if((write(fd, data, alloc_size)) != alloc_size)
+            {
+              r128_log(c, LOG_ERROR, "Cannot proceed with loading file %s from loader: cannot write to temporary file %s, write(): %s: %s\n", im->filename, tempnam, strerror(errno));
+              break;
+            }
+            im->file_size = 0;
+          }
+          else
+          {
+            alloc_size += R128_READ_STEP;
+            data = (char*) r128_realloc(data, alloc_size);
+          }          
+        }
+      }
+      else
+        break; /* EOF! Great! */
+    }
+    
+    if(FD_ISSET(sp_stderr[1], &fds))
+    {
+      int l = read(sp_stderr[1], stderr_buf, 1023);
+      if(l < 0)
+      {
+        r128_log(c, LOG_ERROR, "Cannot proceed with loading file %s from loader: read(stderr): %s\n", im->filename, strerror(errno));
+        break;
+      }
+      else if(l > 0)
+      {
+        stderr_buf[l] = 0;
+        r128_log(c, LOG_NOTICE, "Loader for file %s says: %s\n",  im->filename, stderr_buf);
+      }
+      else
+        break; /* EOF! */
+    }
+    
+    if(c->loader_limit != 0.0)
+      if((r128_time(c) - t_start) > c->loader_limit)
+      {
+        r128_log(c, LOG_ERROR, "Terminating loader for file %s: time limit exceeded.\n", im->filename);
+        break;
+      }
+  }
+
+  close(sp_stderr[1]);
+  close(sp_stdout[1]);
+
+  /* Get rid of the loader process */
+  kill(childpid, SIGKILL);
+  while(waitpid(childpid, NULL, WNOHANG) <= 0)
+    usleep(100000);
+
+  if(c->flags & R128_FL_MMAPALL)
+  {
+    int rc;
+    if((write(fd, data, im->file_size)) != im->file_size)
+    {
+      r128_log(c, LOG_ERROR, "Cannot proceed with loading file %s from loader: cannot write to temporary file %s, write(): %s: %s\n", im->filename, tempnam, strerror(errno));
+      break;
+    }
+    im->file_size = 0;
+    
+    free(data);
+    rc = r128_load_pgm(c, im, tempnam);
+    free(tempnam);
+    return rc;
+  }
+  else
+  {
+    im->file = data;
+    return r128_parse_pgm(c, im, NULL);
+  }
 }
-
-struct r128_image * r128_read_pgm(struct r128_ctx *c, FILE *fh)
-{
-  struct r128_image *r;
-
-  char line[128 + 1];
-  int w, h; 
-  u_int8_t *im;
-
-  r128_log(c, R128_DEBUG1, "Loading image.");
-
-  assert((r = (struct r128_image*) malloc(sizeof(struct r128_image))));
-  memset(r, 0, sizeof(struct r128_image));
-
-  if(!fgets(line, 128, fh)) return err("Invalid file format (1)");
-  if(strncmp(line, "P5", 2)) return err("Invalid file format (2)");
-
-  if(!fgets(line, 128, fh)) return err("Invalid file format (3)");
-//  if(!fgets(line, 128, fh)) return err("Invalid file format (3a)");
-  if(!fgets(line, 128, fh)) return err("Invalid file format (4)");
-  if(sscanf(line, "%d %d", &w, &h) != 2) return err("Invalid file format (5, wrong size)");
-  if(!fgets(line, 128, fh)) return err("Invalid file format (6)");
-  
-  
-  
-  assert(im = (unsigned char*) malloc(w * h));
-  if(fread(im, w * h, 1, fh) != 1) return err("Read error (file truncated?)");
-  
-  r->gray_data = im;
-  c->width = w;
-  c->height = h;
-  
-
-  r128_alloc_lines(c, r);
-  r128_log(c, R128_DEBUG2, "Image loaded.");
-  return r;
-}
-
 
 inline static double floatopt(struct r128_ctx *ctx, char *opt, char *val)
 {
@@ -666,7 +1227,7 @@ inline static int intopt(struct r128_ctx *ctx, char *opt, char *val)
 void r128_defaults(struct r128_ctx *c)
 {
   memset(c, 0, sizeof(struct r128_ctx));
-  c->strategy = "IHWO@0.7,iHWO,IHWo,iHWo,IHwO,iHwO,IHwo,iHwo,IhWO,ihWO,IhWo,ihWo,IhwO,ihwO,Ihwo,ihwo";
+  c->strategy = "IHWO@0.6,iHWO,IHWo,iHWo,IHwO,iHwO,IHwo,iHwo,IhWO,ihWO,IhWo,ihWo,IhwO,ihwO,Ihwo,ihwo";
   c->min_uwidth = 0.9;
   c->max_uwidth = 4;
   c->threshold = 0.5;
@@ -675,7 +1236,6 @@ void r128_defaults(struct r128_ctx *c)
   c->min_cuw_delta2 = 2;
   c->min_cuw_delta1 = 10;
   c->expected_min_height = 8;
-  c->blurring_height = 4;
   c->temp_prefix = "r128temp";
   c->batch_size = 1;
 
@@ -731,7 +1291,8 @@ int main(int argc, char ** argv)
 {
   FILE *fh;
   struct r128_ctx ctx;
-  int c, nh = 0;
+  int c, nh = 0, i;
+  u_int8_t *bestcodes;
 
   clock_gettime(CLOCK_MONOTONIC, &ctx.startup);
   r128_defaults(&ctx);
@@ -806,25 +1367,92 @@ int main(int argc, char ** argv)
   if(nh)
     return help(argv[0], nh);
   
-  
   if(!argv[optind])
   {
-    fprintf(stderr, "Usage: read128 <file name>.pgm\n");
+    fprintf(stderr, "Usage: %s [options] <file name>.pgm\n", argv[0]);
+    fprintf(stderr, "Run %s -h to get help\n", argv[0]);
     return 1;
   }
   
-  if(!(fh = fopen(argv[optind], "rb")))
+  if(ctx.batch_size < 1) ctx.batch_size = 1;
+  if(ctx.blurring_height == 0)
+    ctx.blurring_height = ctx.expected_min_height / 2;
+  
+  ctx.n_images = argc - optind;
+  ctx.im = (struct r128_image*) r128_zalloc(sizeof(struct r128_image) * ctx.n_images);
+  ctx.im_blurred = (struct r128_image*) r128_zalloc(sizeof(struct r128_image) * ctx.n_images);
+  bestcodes = (u_int8_t*) r128_malloc(R128_EXP_CODE_MAX * ctx.n_images);
+  
+  for(i = 0; i<ctx.n_images; i++)
   {
-    perror("fopen");
-    return 1;
+    assert((ctx.im[i].filename = strdup(argv[optind + 1])));
+
+    ctx.im[i].best_rc = R128_EC_NOTHING;
+    ctx.im[i].fd = -1;
+
+    ctx.im[i].bestcodes = bestcodes;
+    bestcodes += R128_EXP_CODE_MAX;
   }
-  ctx.im = r128_read_pgm(&ctx, fh);
   
-  fclose(fh);
-  
-  r128_alloc_buffers(&ctx);
-  r128_try_strategy(&ctx, ctx.strategy);
-  
+  r128_log(&ctx, LOG_DEBUG1, "Command line arguments parsed. Processing starts.\n");
+  for(i = 0; i<ctx.n_images; i += ctx.batch_size)
+  {
+    int j, batch_size = ctx.batch_size;
+    
+    if((i + batch_size) < ctx.n_images)
+      batch_size = ctx.n_images - i;
+
+    r128_log(&ctx, LOG_DEBUG1, "Starting processing of batch %d.\n", i / ctx.batch_size);
+    ctx.batch_start = r128_time(&ctx);
+    
+    ctx.min_width = 65536;
+    ctx.max_width = 0;
+    ctx.max_height = 0;
+    
+    /* Load all images for this batch */
+    for(j = 0; j<batch_size; j++)
+    {
+      struct r128_image * im = &ctx.im[i + j];
+      im->best_rc = min(r128_load_file(&ctx, im), im->best_rc);
+
+      if(!im->gray_data) continue;
+      
+      if(im->height > ctx.max_height) ctx.max_height = im->height;
+      if(im->width > ctx.max_width) ctx.max_width = im->width;
+      if(im->width < ctx.min_width) ctx.min_width = im->width;
+    }
+    
+    /* Reallocate global buffers to match potentially new image sizes */
+    r128_realloc_buffers(&ctx);
+    
+    /* Find the CODES! */
+    r128_run_strategy(&ctx, ctx.strategy, i, batch_size);
+
+    /* Free all images of this batch */
+    for(j = 0; j<batch_size; j++)
+    {
+      r128_free_image(&ctx, &ctx.im[i + j]);
+      r128_free_image(&ctx, &ctx.im_blurred[i + j]);
+    }
+    
+    /* Delete all temporary files */
+    if(!(ctx.flags & R128_FL_KEEPTEMPS))
+    {
+      for(j = ctx.first_temp; j<ctx.last_temp; j++)
+      {
+        char tempname[PATH_MAX + 1];
+        snprintf(tempname, PATH_MAX, "%s%08d.pgm", c->temp_prefix, j);
+        if(unlink(tempname) == -1)
+          r128_log(&ctx, LOG_ERROR, "Cannot delete temporary file %s. unlink(): %s\n", tempname, strerror(errno));
+      }
+      ctx.first_temp = ctx.last_temp;  
+    }
+
+    /* Report batch finished */
+    r128_log(&ctx, LOG_DEBUG1, "Finished processing of batch %d. So far, %d images processed, %d codes found.\n",
+      i / ctx.batch_size, i + batch_size - 1, ctx.n_codes_found);
+  }
+  r128_log(&ctx, LOG_DEBUG1, "All batches processed. Terminating.\n");
   
   return 0;
 }

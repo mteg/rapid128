@@ -6,14 +6,20 @@ struct r128_line
 
 struct r128_image 
 {
+  struct r128_image *root;
   char *filename;
-  int width, height, best_result;
+  int width, height, best_rc, fd;
 
   u_int8_t *bestcode;
-  int bestcode_len, bestcode_alloc;
+#define R128_EXP_CODE_MAX 64
+  u_int16_t bestcode_len, bestcode_alloc, mmaped;
   
   double time_spent;
 
+#define R128_READ_STEP 262144
+  char *file;
+  int file_size;
+  
   u_int8_t *gray_data;
   struct r128_line *lines;
 };
@@ -37,10 +43,13 @@ struct r128_ctx
   int logging_level;
   int page_scan_id;
 
+  int first_temp, last_temp;
+  int n_images, n_codes_found;
+
   /* maximal height */
-  int height;
+  int max_height, max_width, min_width;
   
-  int *codebuf;
+  u_int8_t *codebuf;
   int codepos, codealloc;
   
   /* min/max code unit width to assume */
@@ -65,9 +74,11 @@ struct r128_ctx
   
   /* current scan info */
   int *line_scan_status;
+  int line_scan_alloc;
   
   double batch_limit;
   int batch_size;
+  double batch_start;
   
   char *loader;
   double loader_limit;
@@ -81,6 +92,8 @@ struct r128_ctx
 #define R128_EC_NOCODE 4
 #define R128_EC_NOLINE 5
 #define R128_EC_NOIMAGE 6
+#define R128_EC_NOFILE 7
+#define R128_EC_NOLOADER 8
 #define R128_EC_NOTHING 100
 
 #define R128_ISDONE(ctx, rc) ((rc) == R128_EC_SUCCESS && (!((ctx)->flags & R128_FL_READALL)))
