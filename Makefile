@@ -1,10 +1,10 @@
 CC	= gcc 
 CFLAGS  = -O2 -Wall -D_GNU_SOURCE
 
-SOURCES	= rapid128.c codetree2.c codetabs.c
+SOURCES	= rapid128.c infr.c line.c page.c loadpgm.c pgmimages.c codetree2.c codetabs.c
 OBJECTS	= ${SOURCES:.c=.o}
 OUT	= rapid128
-LIBS	= -lm
+LIBS	= -lm -lrt
 
 all: $(OUT)
 	@echo Build DONE.
