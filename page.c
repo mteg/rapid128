@@ -104,6 +104,7 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
       r128_log(ctx, R128_NOTICE, "Invalid threshold in tactics: '%s', keeping to old threshold, equal %.2f.\n", tactics, ctx->threshold);
 
   r128_log(ctx, R128_DEBUG1, "Now assuming tactics '%s'\n", tactics);
+  r128_configure_rotation(ctx);
   
   for(offs = offs_min; offs < offs_max && (codes_found < codes_to_find || (ctx->flags & R128_FL_READALL)); offs++)
     for(w_ctr = w_ctr_min; w_ctr < w_ctr_max; w_ctr++)
@@ -189,6 +190,8 @@ int r128_run_strategy(struct r128_ctx *ctx, char *strategy, int start, int len)
   */
   ctx->threshold = ctx->def_threshold;
   ctx->rotation = ctx->def_rotation;
+  
+  printf("ROT = %d\n", ctx->rotation);
   
   ctx->min_len = lrint(floor(4.0 * 13.0 * ctx->min_uwidth));
   ctx->max_gap = lrint(ceil(6.0 * ctx->max_uwidth));

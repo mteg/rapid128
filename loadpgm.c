@@ -32,8 +32,9 @@ unsigned char * skip_to_newline_a(unsigned char *ptr, int *len, char *copy_to, i
   
   if(copy_len) *copy_to = 0;
   
-  if(*len)
+  while((*len) > 0)
   {
+    if(!isspace(*ptr)) break;
     ptr++; (*len)--;
   }
   
@@ -52,6 +53,12 @@ unsigned char * skip_comments(unsigned char *ptr, int *len)
       (*len)-- ;        
       if(ptr[-1] == '\n') break;
     }
+  }
+
+  while((*len) > 0)
+  {
+    if(!isspace(*ptr)) break;
+    ptr++; (*len)--;
   }
   
   return ptr;

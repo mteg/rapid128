@@ -70,69 +70,17 @@ int r128_parse(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *symbols, 
   return R128_EC_NOEND;
 }
 
+#define READBITS_NAME r128_read_bits_ltor
+#define r128_read_pixel(ctx, im, li, line, pos) (line[pos])
+#include "readbits.c"
+#undef READBITS_NAME
+#undef r128_read_pixel
 
-
-u_int32_t r128_read_bits(struct r128_ctx *ctx, u_int8_t *line, int w, double ppos, 
-                            double uwidth, double threshold,
-                            u_int32_t pattern, u_int32_t mask, int read_limit, double *curpos)
-{
-  int i;
-  u_int32_t res = 0;
-  
-  for(i = 0; i<read_limit; i++)
-  {
-    double accu = 0.0, npos, sppos;
-    int pmin, pmax, j;
-
-    npos = ppos + uwidth;
- 
-    if(lrint(ceil(npos)) >= w) 
-    {
-      if(curpos) *curpos = npos;
-      break;
-    }
-
-    sppos = ceil(ppos);
-    
-    if(sppos < npos)
-    {
-      /* Add remaining fraction */
-      accu += (ceil(ppos) - ppos) * (double) line[lrint(floor(ppos))];
-      
-      /* Advance to next whole pixel */ 
-      ppos = sppos;
-      
-      /* Number of pixels to read and average */
-      pmin = lrint(ppos);
-      pmax = lrint(floor(npos));
-      for(j = pmin; j<pmax; j++)
-        accu += (double) line[j];
-        
-      /* Add remaining fraction */
-      accu += (npos - floor(npos)) * (double) line[lrint(floor(npos))];
-    }
-    else
-      accu += (npos - ppos) * (double) line[lrint(floor(ppos))];    
-    
-    /* Ready for inputting the next bit */
-    res <<= 1;
-
-    /* Threshold! */
-    if(accu < threshold)
-      res |= 1;
-
-    if(curpos)
-      *curpos = npos;
-
-    if(mask)
-      if((res & mask) == pattern)
-        return res;
-        
-    ppos = npos;
-  }
-  
-  return res;
-}
+#define READBITS_NAME r128_read_bits_rtol
+#define r128_read_pixel(ctx, im, li, line, pos) (line[li->linesize - 1 - pos])
+#include "readbits.c"
+#undef READBITS_NAME
+#undef r128_read_pixel
 
 void r128_update_best_code(struct r128_ctx *ctx, struct r128_image *im, u_int8_t *symbols, int len)
 {
@@ -149,11 +97,12 @@ void r128_update_best_code(struct r128_ctx *ctx, struct r128_image *im, u_int8_t
 }
 
 
-int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *line, int w, double ppos, double uwidth, double threshold)
+int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_line *li, double ppos, double uwidth, double threshold)
 {
   int rc = R128_EC_NOEND;
   static double weights[] = {1.0, 1.05, 0.95, 1.02, 0.98};
   double new_ppos;
+  int w = li->linesize;
   
   while(lrint(ceil(ppos)) < w) 
   {
@@ -162,7 +111,7 @@ int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *line,
     
     for(i = 0; i<5; i++) 
     {
-      code = r128_read_bits(ctx, line, w, ppos - uwidth, uwidth * weights[i], threshold * weights[i], 0, 0, 13, &new_ppos);
+      code = ctx->read_bits(ctx, img, li, ppos - uwidth, uwidth * weights[i], threshold * weights[i], 0, 0, 13, &new_ppos);
       cs = code_symbols[(code >> 2) & 0x1ff];
     
       if(!((code & 2) || (!(code & 1)) || (!(code & 0x800)) || (code & 0x1000) || cs == -1))
@@ -208,7 +157,6 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
  */ 
   int rc = R128_EC_NOCODE;
   double ppos = offset * uwidth, w = li->linesize;
-  u_int8_t *line = im->gray_data + li->offset;
   
   if(!w) return R128_EC_NOLINE;
     
@@ -216,7 +164,7 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
 
   while(1)
   {
-    u_int32_t start_symbol = r128_read_bits(ctx, line, w, ppos, uwidth, threshold, 
+    u_int32_t start_symbol = ctx->read_bits(ctx, im, li, ppos, uwidth, threshold, 
                       0x0d01, 0x3fc1, 65536, &ppos);
     if(lrint(ceil(ppos + 3.0 * 11.0 * uwidth)) >= w) break; /* Nothing interesting found - start comes too late for a meaningful code! */
     
@@ -228,7 +176,7 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
       ctx->codebuf[ctx->codepos++] = code_symbols[(start_symbol >> 2) & 0x1ff];
 
       /* Perhaps we found a code! */
-      rc = minrc(rc, r128_read_code(ctx, im, line, w, ppos - uwidth, uwidth, threshold));
+      rc = minrc(rc, r128_read_code(ctx, im, li, ppos - uwidth, uwidth, threshold));
       /* Have we succeeded? */
       if(R128_ISDONE(ctx, rc)) 
         return rc;
@@ -241,3 +189,12 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
   return rc;
 }
 
+
+void r128_configure_rotation(struct r128_ctx *ctx)
+{
+  switch(ctx->rotation)
+  {
+    default: ctx->read_bits = r128_read_bits_ltor; break;
+    case 2: ctx->read_bits = r128_read_bits_rtol; break;
+  }
+}
