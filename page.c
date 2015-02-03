@@ -105,11 +105,22 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
   int w_ctr_min = 1, w_ctr_max, w_ctr;
   int offs, offs_min = 0, offs_max = 4;
   int h_min = ctx->expected_min_height, h_max;
-  char *thresh_input;
+  char *param_input;
 
   int codes_found = 0;
   
   ctx->tactics = tactics;
+
+  if((param_input = strstr(tactics, "@")))
+    if(sscanf(param_input + 1, "%lf", &ctx->threshold) != 1)
+      r128_log(ctx, R128_NOTICE, "Invalid threshold in tactics: '%s', keeping to old threshold, equal %.2f.\n", tactics, ctx->threshold);
+
+  if((param_input = strstr(tactics, ":")))
+  {
+   ctx->rotation = 0; param_input++;
+   while(*(param_input++) == 'r')
+    ctx->rotation++;
+  }
 
   if(ctx->rotation & 1)
   {
@@ -135,9 +146,6 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
   if(strstr(tactics, "h")) { h_min = 1; h_max = ctx->expected_min_height; }
   if(strstr(tactics, "w")) { w_ctr_min = w_ctr_max; w_ctr_max = ctx->wctrmax_stage2; }
 
-  if((thresh_input = strstr(tactics, "@")))
-    if(sscanf(thresh_input + 1, "%lf", &ctx->threshold) != 1)
-      r128_log(ctx, R128_NOTICE, "Invalid threshold in tactics: '%s', keeping to old threshold, equal %.2f.\n", tactics, ctx->threshold);
 
   r128_log(ctx, R128_DEBUG1, "Now assuming tactics '%s'\n", tactics);
   r128_configure_rotation(ctx);

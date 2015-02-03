@@ -53,7 +53,7 @@ void r128_defaults(struct r128_ctx *c)
   c->codebuf = (u_int8_t*) r128_malloc(c, c->codealloc * sizeof(int));
 }
 
-int help(char *progname, int vb)
+int help(struct r128_ctx *ctx, char *progname, int vb)
 {
   printf("rapid128 barcode scanner, (c) 2015 Mateusz 'mteg' Golicz\n");
   printf("Usage: %s [options] <file1> [<file2> [<file3> ...]]\n", progname);
@@ -63,10 +63,10 @@ int help(char *progname, int vb)
   printf(" -hh        Print extended help and quit\n");
   printf("\n");
   printf("BASIC SCANNER PARAMETERS\n");
-  printf(" -wa <pix>  Minimum expected width of thinnest bar in pixels\n");
-  printf(" -wb <pix>  Maximum expected width of thinnest bar in pixels\n");
-  printf(" -mh <lvl>  High (white) threshold for cutting margins\n");
-  printf(" -ml <lvl>  Low (black) threshold for cutting margins\n");
+  printf(" -wa <pix>  Minimum expected width of thinnest bar in pixels [%.1f]\n", ctx->min_uwidth);
+  printf(" -wb <pix>  Maximum expected width of thinnest bar in pixels [%.1f]\n", ctx->max_uwidth);
+  printf(" -mh <lvl>  High (white) threshold for cutting margins [%d]\n", ctx->margin_high_threshold);
+  printf(" -ml <lvl>  Low (black) threshold for cutting margins [%d]\n", ctx->margin_low_threshold);
   if(vb == 2)
   {
     printf("Please carefully select a good range for -wa / -wb. These options practically "
@@ -80,12 +80,12 @@ int help(char *progname, int vb)
   }
   printf("\n");
   printf("PERFORMANCE TUNING\n");
-  printf(" -ch <pix>  Expected minimal code height\n");
+  printf(" -ch <pix>  Expected minimal code height [%d]\n", ctx->expected_min_height);
   printf(" -nb        Do not use blurring at all\n");
-  printf(" -bh <pix>  Blurring height\n");
+  printf(" -bh <pix>  Blurring height [%d]\n", ctx->blurring_height ? ctx->blurring_height : (ctx->expected_min_height / 2));
   printf(" -s  <strg> Configure scanning strategy\n"); 
-  printf(" -da <unts> Minimum width scans resolution (pass 1 - uppercase H)\n");
-  printf(" -db <unts> Minimum width scans resolution (pass 2 - lowercase h)\n");
+  printf(" -da <unts> Minimum width scans resolution (pass 1 - uppercase H) [%.1f]\n", ctx->min_cuw_delta1);
+  printf(" -db <unts> Minimum width scans resolution (pass 2 - lowercase h) [%.1f]\n", ctx->min_cuw_delta2);
   if(vb == 2)
   {
     printf("Expected minimal height affects speed, but not detection. In first pass, rapid128 only"
@@ -95,12 +95,12 @@ int help(char *progname, int vb)
            "This sometimes improves situation in presence of noise (especially fading toner etc.). Use -bh to "
            "specify blurring range (default is half of expected code width). Use -nb in case your codes are "
            " likely to be slightly rotated - vertical blur will only make situation worse\n");
-           
+    printf("Scanning strategies are explained at the end of this help.\n");
   }
 
   printf("\n");
   printf("IMAGE INTERPRETATION\n");
-  printf(" -t <float> Threshold.\n");
+  printf(" -t <float> Threshold [%.2f].\n", ctx->threshold);
   printf(" -r         Codes are not horizontal and oriented left to right, but rather rotated by 90 degress clockwise (use twice/three times to indicate 180/270)\n");
   printf(" -ic R/G/B  Use only the indicated channel of RGB images\n");
   if(vb == 2)
@@ -126,8 +126,8 @@ int help(char *progname, int vb)
 
   printf("\n");
   printf("BATCH PROCESSING\n");
-  printf(" -bs <cnt>  Batch size - number of files processed at once\n");
-  printf(" -bt <secs> Time limit for each batch\n");
+  printf(" -bs <cnt>  Batch size - number of files processed at once [%d]\n", ctx->batch_size);
+  printf(" -bt <secs> Time limit for each batch [%.1f]\n", ctx->batch_limit);
   if(vb == 2)
   {
     printf("Without -bs, files are processed one by one. However, if a batch size is given with -bs, rapid128 "
@@ -138,8 +138,8 @@ int help(char *progname, int vb)
   }
   printf("\n");
   printf("FILE INPUT\n");
-  printf(" -lc <cmd>  Set loader command (spacebar + file name is appended at the end)\n");
-  printf(" -lt <secs> Time limit for the loader command\n");
+  printf(" -lc <cmd>  Set loader command (spacebar + file name is appended at the end) [%s]\n", ctx->loader);
+  printf(" -lt <secs> Time limit for the loader command [%.1f]\n", ctx->loader_limit);
   if(vb == 2)
   {
     printf("Normally, rapid128 processes only PGM files. To load other file formats, a loader command"
@@ -153,7 +153,7 @@ int help(char *progname, int vb)
   printf("\n");
   printf("MEMORY MANAGEMENT\n");
   printf(" -mm        Save RAM: write to temporary files and mmap() everything\n");
-  printf(" -mp <pfx>  Prefix for temporary files (NNNNNN.pgm is appended)\n"); 
+  printf(" -mp <pfx>  Prefix for temporary files (NNNNNN.pgm is appended) [%s]\n", ctx->temp_prefix); 
   printf(" -ma        Never mmap() anything, load all into RAM\n");
   if(vb == 2)
   {
@@ -184,8 +184,41 @@ int help(char *progname, int vb)
            "Use -nm to disable this feature. In most cases, however, this will only decrease performance and "
            "not affect detection in any way. If a code is detected with -nm that was not detected otherwise, it"
            " is most probably a bug\n");
-  
+    
+    printf("\n"
+           "ON SCANNING STRATEGIES\n"
+           "Rapid128 scans barcodes using a brute force approach. There are couple of variables "
+           "that need to be guessed to successfuly read a barcode: (1) narrowest bar width, "
+           "(2) vertical position of the code, (3) horizontal offset of the beginning of the barcode "
+           "(in fractions of bar width). Rapid128 tries to guess all of these variables by bisecting "
+           "the search range, while also employing a breadth first search strategy. \n"
+           "In order to speed up detection, configuration space for each of the three variables gets subdivided "
+           "into two parts: coarse and fine. Scanning strategy tells rapid128 which parts of the configuration "
+           "space explore first. It usually makes a lot of sense to do a coarse brute force first: for example, "
+           "coarse vertical position space consists of only 1/<expected_min_barcode_height> lines that are spaced "
+           "apart vertically by <expected_min_barcode_height>. If we are dealing with a clean, undamaged scan, "
+           "it is sufficient to analyze only this small percentage of lines - one of them will contain the code anyway.\n"
+           "Additionaly, scanning strategy can tell rapid128 to try different orientations of the image or thresholds.\n"
+           "Currently configured scanning strategy is: %s\n"
+           "Scanning strategy consists of comma-separated search instructions, called 'tactics'. These instructions select "
+           "parts of the complete configuration space to consider and are executed sequentially for every batch of images. "
+           "Every tactis is a concatenated string of the following letters:\n"
+           " W or w   Select coarse or fine smallest bar width search.\n"
+           " H or h   Select coarse or fine vertical position search.\n"
+           " O or o   Select coarse or fine horizontal offsets search.\n"
+           " I or i   Use normal or vertically blurred image.\n"
+           "Additionally, it is possible to specify a threshold (eg. '@0.5') or rotation (eg. ':rr') by appending "
+           "extra tags at the end of configuration space selectors. The selected rotation or threshold holds " 
+           "for all subsequent tactics, until another rotation or threshold is configured.\n"
+           "Please note that 'o' and 'w' parts of the configuration space make sense only in "
+           "case of very wide and (possibly) damaged codes (smallest bar more than 3 - 5 pixels).\n"
+           "Please consider using the following strategies:\n"
+           "- default - for best detection, worst speed\n"
+           "- IWHO,IWHO:r,IWhO:,IWhO:r  or similar - when not sure whether code will be horizontal or vertical (use rr and rrr for 180 and 270 guesses)\n"
+           "- IWHO,IWhO,iWHO,iWhO   - for narrow codes, when speed is important and input material is of good quality\n"
+           "- IWHO,IWhO   - when in need for very fast operation and not a lot of concern about undetected codes in low quality input.\n", ctx->strategy)  ;
   }
+  
 
   return 0;
 }
@@ -306,7 +339,7 @@ int main(int argc, char ** argv)
   }
   
   if(nh)
-    return help(argv[0], nh);
+    return help(&ctx, argv[0], nh);
   
   if(!argv[optind])
   {
