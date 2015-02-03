@@ -77,7 +77,19 @@ int r128_parse(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *symbols, 
 #undef r128_read_pixel
 
 #define READBITS_NAME r128_read_bits_rtol
-#define r128_read_pixel(ctx, im, li, line, pos) (line[li->linesize - 1 - pos])
+#define r128_read_pixel(ctx, im, li, line, pos) (line[li->linesize - 1 - (pos)])
+#include "readbits.c"
+#undef READBITS_NAME
+#undef r128_read_pixel
+
+#define READBITS_NAME r128_read_bits_ttob
+#define r128_read_pixel(ctx, im, li, line, pos) (line[(pos) * im->width])
+#include "readbits.c"
+#undef READBITS_NAME
+#undef r128_read_pixel
+
+#define READBITS_NAME r128_read_bits_btot
+#define r128_read_pixel(ctx, im, li, line, pos) (line[(li->linesize - 1 - (pos)) * im->width])
 #include "readbits.c"
 #undef READBITS_NAME
 #undef r128_read_pixel
@@ -195,6 +207,8 @@ void r128_configure_rotation(struct r128_ctx *ctx)
   switch(ctx->rotation)
   {
     default: ctx->read_bits = r128_read_bits_ltor; break;
+    case 1: ctx->read_bits = r128_read_bits_ttob; break;
     case 2: ctx->read_bits = r128_read_bits_rtol; break;
+    case 3: ctx->read_bits = r128_read_bits_btot; break;
   }
 }

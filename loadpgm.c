@@ -189,7 +189,7 @@ P1 (3 bytes)
   else
     im->gray_data = b;
 
-  im->lines = (struct r128_line*) r128_malloc(c, as = sizeof(struct r128_line) * im->height);
+  im->lines = (struct r128_line*) r128_malloc(c, as = sizeof(struct r128_line) * (im->height + im->width));
   memset(im->lines, 0xff, as);
   
   return r128_log_return(c, R128_DEBUG1, R128_EC_NOIMAGE - 1, "Successfuly parsed PGM file %s (%d x %d, P5, 255)\n", filename, im->width, im->height);

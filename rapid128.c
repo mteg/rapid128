@@ -108,8 +108,7 @@ int help(char *progname, int vb)
     printf("By default, rapid128 only scans for codes placed horizontally, with normal left to right orientation. "
            "Use -r to scan codes oriented from top to bottom (90 degree rotation), -rr to scan codes from pages rotated 180 degrees"
            "or -rrr to scan codes rotated 270 degrees (bottom to top).\n"
-           "If you would like to scan various orientations in sequence, define your own scanning strategy (-s). This option will then be applied only for first tactics (if no instructions regarding rotation are specified in the tactics).\n"
-           "Note that rapid128 cheats in order to save time: rotations by 180 and 270 are implemented as mirror flips.\n"
+           "Note that rapid128 cheats in order to save time: rotations by 180 and 270 are implemented as flips of 0 and 90.\n"
            "All processing in rapid128 takes place in grayscale. In case a P6 (RGB) image is provided as input, it will "
            "be reduced to grayscale first. The -ic option is used to select only one channel from RGB of images. "
            "For example, if you have scans of documents with handwritten signatures likely to be in blue pen, use -ic R or -ic G "
@@ -118,7 +117,11 @@ int help(char *progname, int vb)
            "-ic does not affect processing grayscale or black-and-white inputs at all\n"
            "Use -t to alter decision threshold for classifying pixels as black (1) or white (0). Use negative threshold for "
            "inverted images. Use threshold larger than 0.5 for images that are a bit too white (fading toner etc) "
-           "and smaller than 0.5 for images that are a bit too black (after processing by a 'blackening' copy machine)\n");
+           "and smaller than 0.5 for images that are a bit too black (after processing by a 'blackening' copy machine)\n"
+           "If you would like to scan various orientations and/or thresholds in sequence, define your own scanning strategy "
+           "(-s). The -t and -r options will then be applied only for first tactics, until instructions regarding rotation/orientation are found in the strategy.\n"
+           
+           );
   }
 
   printf("\n");
@@ -343,6 +346,8 @@ int main(int argc, char ** argv)
     ctx.batch_start = r128_time(&ctx);
     
     ctx.min_width = 65536;
+    ctx.min_height = 65536;
+
     ctx.max_width = 0;
     ctx.max_height = 0;
     
@@ -356,6 +361,8 @@ int main(int argc, char ** argv)
       
       if(im->height > ctx.max_height) ctx.max_height = im->height;
       if(im->width > ctx.max_width) ctx.max_width = im->width;
+
+      if(im->height < ctx.min_height) ctx.min_height = im->height;
       if(im->width < ctx.min_width) ctx.min_width = im->width;
     }
     

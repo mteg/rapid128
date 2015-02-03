@@ -17,44 +17,58 @@
 
 #define R128_MARGIN_CLASS(c, val) ((val) >= (c)->margin_high_threshold ? 1 : ((val) <= (c)->margin_low_threshold ? -1 : 0))
 
-struct r128_line *r128_get_line(struct r128_ctx *ctx, struct r128_image *im, int line)
+struct r128_line *r128_get_line(struct r128_ctx *ctx, struct r128_image *im, int line, int rotation)
 {
   int min_len = ctx->min_len, max_gap = ctx->max_gap;
   u_int8_t *data;
-  int len, start = 0;
+  int len, start = 0, pixmult;
+  struct r128_line *linetab = im->lines;
   
-  if(im->lines[line].offset != 0xffffffff) return &im->lines[line];
+  if(rotation & 1) linetab += im->height;  
+  if(linetab[line].offset != 0xffffffff) return &linetab[line];
   
   data = im->gray_data;
 
-  start = line * im->width;
-  len = im->width;
+  if(rotation & 1)
+  {
+    /* Vertical line */
+    start = line;
+    len = im->height;
+    pixmult = im->width;
+  }
+  else
+  {
+    /* Horizontal line */
+    start = line * im->width;
+    len = im->width;
+    pixmult = 1;
+  }
   
   if((min_len >= max_gap) && (!(ctx->flags & R128_FL_NOCROP)))
   {
-    int prev_so_far = R128_MARGIN_CLASS(ctx, data[min_len - max_gap]);
+    int prev_so_far = R128_MARGIN_CLASS(ctx, data[(min_len - max_gap) * pixmult]);
     int so_far, gap;
     
     /* Left margin */
     for(gap = 1; prev_so_far && (gap + min_len - max_gap)<len; prev_so_far = so_far, gap++)
-      if((so_far = R128_MARGIN_CLASS(ctx, data[start + gap + min_len - max_gap])) != prev_so_far)
+      if((so_far = R128_MARGIN_CLASS(ctx, data[start + (gap + min_len - max_gap) * pixmult])) != prev_so_far)
         break;
     
     /* Indeed a gap! */
     if(gap > max_gap)
     {
       gap += min_len - max_gap;
-      start += gap;
+      start += gap * pixmult;
       len -= gap;
     }
     
     /* Right margin */
     if(len > min_len)
     {
-      prev_so_far = R128_MARGIN_CLASS(ctx, data[start + len - min_len + max_gap]);
+      prev_so_far = R128_MARGIN_CLASS(ctx, data[start + (len - min_len + max_gap) * pixmult]);
 
       for(gap = 1; prev_so_far && (start + len - gap - min_len + max_gap) >= 0; prev_so_far = so_far, gap++)
-        if((so_far = R128_MARGIN_CLASS(ctx, data[start + len - gap - min_len + max_gap])) != prev_so_far)
+        if((so_far = R128_MARGIN_CLASS(ctx, data[start + (len - gap - min_len + max_gap) * pixmult])) != prev_so_far)
           break;
       
       /* Indeed a gap! */
@@ -64,23 +78,22 @@ struct r128_line *r128_get_line(struct r128_ctx *ctx, struct r128_image *im, int
   }
   
   if(len < min_len) len = 0;
-  r128_log(ctx, R128_DEBUG2, "Prepared line %d of %simage %s: start = %d, len = %d\n", line, im->root ? "blurred " : "", 
+  r128_log(ctx, R128_DEBUG2, "Prepared line %d of %s %simage %s: start = %d, len = %d\n", line, im->root ? "blurred " : "",
+        (rotation & 1)  ? "rotated " : "",
         im->root ? im->root->filename : im->filename, start, len);
 
-  im->lines[line].offset = start;
-  im->lines[line].linesize = len;
+  linetab[line].offset = start;
+  linetab[line].linesize = len;
   
-  return &im->lines[line];
-  
-  
+  return &linetab[line];  
 }
 
 
 
 void r128_alloc_lines(struct r128_ctx *ctx, struct r128_image *i)
 {
-  assert((i->lines = (struct r128_line*) malloc(sizeof(struct r128_line) * i->height)));
-  memset(i->lines, 0xff, sizeof(struct r128_line) * i->height);
+  assert((i->lines = (struct r128_line*) malloc(sizeof(struct r128_line) * (i->height + i->width))));
+  memset(i->lines, 0xff, sizeof(struct r128_line) * i->height * 2);
 }
 
 

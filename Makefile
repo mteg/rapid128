@@ -6,9 +6,10 @@ OBJECTS	= ${SOURCES:.c=.o}
 OUT	= rapid128
 LIBS	= -lm -lrt
 
+
 all: $(OUT)
 	@echo Build DONE.
-	
+
 $(OUT): $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $(OUT) $(OBJECTS) $(LIBS)
 

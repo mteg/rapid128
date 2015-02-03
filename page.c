@@ -23,11 +23,14 @@ static inline int log2_ceil(int val)
 
 void r128_realloc_buffers(struct r128_ctx *c)
 {
-  if(c->line_scan_alloc < c->max_height)
+  int lss = c->max_height;  
+  if(c->max_width > lss) lss = c->max_width;
+
+  if(c->line_scan_alloc < lss)
   {
-    c->line_scan_status = r128_realloc(c, c->line_scan_status, sizeof(int) * c->max_height);
-    memset(c->line_scan_status + c->line_scan_alloc, 0, (c->max_height - c->line_scan_alloc) * sizeof(int));
-    c->line_scan_alloc = c->max_height;
+    c->line_scan_status = r128_realloc(c, c->line_scan_status, sizeof(int) * lss);
+    memset(c->line_scan_status + c->line_scan_alloc, 0, (lss - c->line_scan_alloc) * sizeof(int));
+    c->line_scan_alloc = lss;
   }
 }
 
@@ -36,11 +39,24 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
 {
   int min_ctr, max_ctr, ctr, lines_scanned = 0, rc = R128_EC_NOCODE;
   double t_start = r128_time(ctx);
+  int linemax;
   
-  if(maxheight > img->height) maxheight = img->height;
+  if(ctx->rotation & 1)
+  {
+    if(maxheight > img->width) maxheight = img->width;
+    
+    min_ctr = log2_ceil(img->width / maxheight);
+    max_ctr = log2_ceil(img->width / minheight);
+    linemax = img->width;
+  }
+  else
+  {
+    if(maxheight > img->height) maxheight = img->height;
   
-  min_ctr = log2_ceil(img->height / maxheight);
-  max_ctr = log2_ceil(img->height / minheight);
+    min_ctr = log2_ceil(img->height / maxheight);
+    max_ctr = log2_ceil(img->height / minheight);
+    linemax = img->height;
+  }
   
   ctx->page_scan_id++;
   r128_log(ctx, R128_DEBUG1, "Page scan # %d of %simage %s starts: offs = %.3f, th = %.2f, heights = %d ~ %d, uwidth = %.2f\n", 
@@ -50,7 +66,7 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
   for(ctr = min_ctr; ctr < max_ctr; ctr++)
   {
     /* Determine line number */
-    int line_idx = (img->height * bfsguidance(ctr)) >> 16;
+    int line_idx = (linemax * bfsguidance(ctr)) >> 16;
     
     /* Check if this line was already done in this pass */
     if(ctx->line_scan_status[line_idx] == ctx->page_scan_id) continue;
@@ -59,7 +75,7 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
     ctx->line_scan_status[line_idx] = ctx->page_scan_id;
 
     /* Check the line */
-    rc = minrc(rc, r128_scan_line(ctx, img, r128_get_line(ctx, img, line_idx), uwidth, offset, ctx->threshold));
+    rc = minrc(rc, r128_scan_line(ctx, img, r128_get_line(ctx, img, line_idx, ctx->rotation), uwidth, offset, ctx->threshold));
     
     /* Increment scanned lines counter */
     lines_scanned ++;
@@ -86,15 +102,35 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
 int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, int codes_to_find)
 {
   static double offsets[] = {0, 0.5, 0.25, 0.75, 0.125, 0.375, 0.625, 0.875};
-  int w_ctr_min = 1, w_ctr_max = ctx->wctrmax_stage1, w_ctr;
+  int w_ctr_min = 1, w_ctr_max, w_ctr;
   int offs, offs_min = 0, offs_max = 4;
-  int h_min = ctx->expected_min_height, h_max = ctx->max_height;
+  int h_min = ctx->expected_min_height, h_max;
   char *thresh_input;
 
   int codes_found = 0;
   
   ctx->tactics = tactics;
+
+  if(ctx->rotation & 1)
+  {
+    h_max = ctx->max_width;
+    ctx->min_doc_cuw = ((double) ctx->min_height) / ctx->max_uwidth;
+    ctx->max_doc_cuw = ((double) ctx->max_height) / ctx->min_uwidth;
+  }
+  else
+  {
+    h_max = ctx->max_height;
+    ctx->min_doc_cuw = ((double) ctx->min_width) / ctx->max_uwidth;
+    ctx->max_doc_cuw = ((double) ctx->max_width) / ctx->min_uwidth;
+  }
   
+  /* Therefore, we span a range of...? */
+  ctx->doc_cuw_span = ctx->max_doc_cuw - ctx->min_doc_cuw;
+  
+  /* Number of subdivisions required to reach a difference less than cuw_delta1? */
+  w_ctr_max = ctx->wctrmax_stage1 = log2_ceil(lrint(ctx->doc_cuw_span / ctx->min_cuw_delta1));
+  ctx->wctrmax_stage2 = log2_ceil(lrint(ctx->doc_cuw_span / ctx->min_cuw_delta2));
+
   if(strstr(tactics, "o")) { offs_min = 4; offs_max = 8; }
   if(strstr(tactics, "h")) { h_min = 1; h_max = ctx->expected_min_height; }
   if(strstr(tactics, "w")) { w_ctr_min = w_ctr_max; w_ctr_max = ctx->wctrmax_stage2; }
@@ -120,7 +156,12 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
         struct r128_image *img = &ctx->im[start + i];
 
         /* Determine unit width to act with for this w_ctr */
-        double uwidth = ((double) img->width) / cuw;
+        double uwidth;
+        
+        if(ctx->rotation & 1)
+          uwidth = ((double) img->height) / cuw;
+        else
+          uwidth = ((double) img->width) / cuw;
       
         if(ctx->batch_limit != 0.0)
         {
@@ -191,8 +232,6 @@ int r128_run_strategy(struct r128_ctx *ctx, char *strategy, int start, int len)
   ctx->threshold = ctx->def_threshold;
   ctx->rotation = ctx->def_rotation;
   
-  printf("ROT = %d\n", ctx->rotation);
-  
   ctx->min_len = lrint(floor(4.0 * 13.0 * ctx->min_uwidth));
   ctx->max_gap = lrint(ceil(6.0 * ctx->max_uwidth));
   
@@ -200,16 +239,6 @@ int r128_run_strategy(struct r128_ctx *ctx, char *strategy, int start, int len)
   
   /* Minimum codeunit width of document is? */
 
-#warning think a while!
-  ctx->min_doc_cuw = ((double) ctx->min_width) / ctx->max_uwidth;
-  ctx->max_doc_cuw = ((double) ctx->max_width) / ctx->min_uwidth;
-  
-  /* Therefore, we span a range of...? */
-  ctx->doc_cuw_span = ctx->max_doc_cuw - ctx->min_doc_cuw;
-  
-  /* Number of subdivisions required to reach a difference less than cuw_delta1? */
-  ctx->wctrmax_stage1 = log2_ceil(lrint(ctx->doc_cuw_span / ctx->min_cuw_delta1));
-  ctx->wctrmax_stage2 = log2_ceil(lrint(ctx->doc_cuw_span / ctx->min_cuw_delta2));
   
   /* Compute # of codes to find */
   for(i = 0; i<len; i++)
