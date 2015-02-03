@@ -93,6 +93,8 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
 
   int codes_found = 0;
   
+  ctx->tactics = tactics;
+  
   if(strstr(tactics, "o")) { offs_min = 4; offs_max = 8; }
   if(strstr(tactics, "h")) { h_min = 1; h_max = ctx->expected_min_height; }
   if(strstr(tactics, "w")) { w_ctr_min = w_ctr_max; w_ctr_max = ctx->wctrmax_stage2; }
@@ -103,7 +105,7 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
 
   r128_log(ctx, R128_DEBUG1, "Now assuming tactics '%s'\n", tactics);
   
-  for(offs = offs_min; offs < offs_max && codes_found < codes_to_find; offs++)
+  for(offs = offs_min; offs < offs_max && (codes_found < codes_to_find || (ctx->flags & R128_FL_READALL)); offs++)
     for(w_ctr = w_ctr_min; w_ctr < w_ctr_max; w_ctr++)
     {
       /* First, determine document width in code units for this try */
@@ -151,7 +153,9 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
         
         
       }
-      if(codes_found >= codes_to_find) break;
+      if(codes_found >= codes_to_find) 
+       if(!(ctx->flags & R128_FL_READALL)) 
+        break;
     }
   
   r128_log(ctx, R128_DEBUG2, "Finishing tactics '%s': %d of %d codes found\n", tactics, codes_found, codes_to_find);
@@ -206,7 +210,7 @@ int r128_run_strategy(struct r128_ctx *ctx, char *strategy, int start, int len)
     if(ctx->im[start + i].gray_data)
       codes_to_find++;
   
-  while(strategy && codes_found < codes_to_find)
+  while(strategy && (codes_found < codes_to_find || (ctx->flags & R128_FL_READALL)))
   {
     char *next_strategy = index(strategy, ',');
     

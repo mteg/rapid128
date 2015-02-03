@@ -86,7 +86,8 @@ int r128_report_code(struct r128_ctx *ctx, struct r128_image *img, char *code, i
   if(ctx->flags & R128_FL_EREPORT)
   {
     int i;
-    printf("%s:%.3f:%s", img->root ? img->root->filename : img->filename, img->time_spent, r128_strerror(img->best_rc));
+    printf("%s:%.3f:%s:%s", img->root ? img->root->filename : img->filename,
+      img->time_spent, code ? ctx->tactics : "", r128_strerror(img->best_rc));
     for(i = 0; i<img->bestcode_len; i++)
       printf("%c%d", i ? ' ' : ':', img->bestcode[i]);
     printf(":");

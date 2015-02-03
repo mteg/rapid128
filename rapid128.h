@@ -27,6 +27,7 @@ struct r128_image
 struct r128_ctx
 {
   char *strategy;
+  char *tactics;
   int flags;
 #define R128_FL_READALL 1
 #define R128_FL_NOCKSUM 2
@@ -35,6 +36,7 @@ struct r128_ctx
 #define R128_FL_RAMALL 16
 #define R128_FL_NOCROP 32
 #define R128_FL_KEEPTEMPS 64
+#define R128_FL_NOBLUR 128
 
   char *temp_prefix;
 

@@ -132,8 +132,6 @@ P1 (3 bytes)
     int fd, x = 0, cr = 0;
     char *tempnam;
     
-    printf("proc because %d %d\n", type, maxval);
-    
     if(!(data = line = r128_alloc_for_conversion(c, im, im->filename, "conversion", &fd, &tempnam)))
       return R128_EC_NOIMAGE;
 
@@ -154,10 +152,11 @@ P1 (3 bytes)
         else
           /* Continue writing to RAM */
           line += im->width;
+          
 
         x = 0;
       }
-      if(pix > pixcnt) break;
+      if(pix >= pixcnt) break;
       switch(type)
       {
         case 4:
@@ -167,17 +166,15 @@ P1 (3 bytes)
           cr >>= 1;
           break;
         case 5: line[x++] = (*(b++)) * 255 / maxval; break;
-        case 6: line[x++] = b[0] + b[1] + b[2] / 3; b+= 3; break;
+        case 6: line[x++] = (b[0] + b[1] + b[2]) / 3; b+= 3; break;
       }
     }
-    
     r128_free_image(c, im);
     
     if(c->flags & R128_FL_MMAPALL)
       return r128_mmap_converted(c, im, fd, tempnam);
     else
     {
-      free(im->file);
       im->file = (char*) data;
       im->gray_data = data;
     }
@@ -217,7 +214,7 @@ int r128_load_pgm(struct r128_ctx *c, struct r128_image *im, char *filename)
     if(rc == -1)
     {
       close(im->fd); im->fd = -1;
-      r128_free(im->file);
+      r128_free(im->file); im->file = NULL;
       r128_log(c, R128_ERROR, "Cannot load file %s: read(): %s\n", filename, strerror(errno));
       return R128_EC_NOFILE;
     }
@@ -245,10 +242,8 @@ int r128_load_pgm(struct r128_ctx *c, struct r128_image *im, char *filename)
   }
   
   if((rc = r128_parse_pgm(c, im, filename)) >= R128_EC_NOIMAGE)
-  {
-    printf("RCERR\n");
     r128_free_image(c, im);
-  }
+
   return rc;
 }
 
@@ -280,10 +275,10 @@ int r128_load_file(struct r128_ctx *c, struct r128_image *im)
     }
   }
   
-  if(socketpair(AF_LOCAL, 0, 0, sp_stdout) == -1)
+  if(socketpair(AF_LOCAL, SOCK_STREAM, 0, sp_stdout) == -1)
       return r128_log_return(c, R128_ERROR, R128_EC_NOLOADER, "Cannot start loader for file %s: socketpair(): %s\n", im->filename, strerror(errno));
 
-  if(socketpair(AF_LOCAL, 0, 0, sp_stderr) == -1)
+  if(socketpair(AF_LOCAL, SOCK_STREAM, 0, sp_stderr) == -1)
       return r128_log_return(c, R128_ERROR, R128_EC_NOLOADER, "Cannot start loader for file %s: socketpair(): %s\n", im->filename, strerror(errno));
   
   t_start = r128_time(c);
@@ -295,17 +290,24 @@ int r128_load_file(struct r128_ctx *c, struct r128_image *im)
     case 0:
     {
       char *args[4] = {"/bin/sh", "-c", NULL, NULL};
-      char *cmdstr;
+      char *cmdstr, *argptr;
       int i, l, pos;
       
       close(sp_stdout[0]);
       close(sp_stderr[0]);
-      dup2(1, sp_stdout[1]);
-      dup2(2, sp_stderr[1]);
+      dup2(sp_stdout[1], 1);
+      dup2(sp_stderr[1], 2);
       
       cmdstr = r128_malloc(c, (pos = strlen(c->loader)) + (l = strlen(im->filename)) * 5 + 16);
-      memcpy(cmdstr, c->loader, pos);
-      pos += sprintf(cmdstr + pos, " '");
+      args[2] = cmdstr;
+
+      memcpy(cmdstr, c->loader, pos); cmdstr[pos] = 0;
+      if((argptr = strstr(cmdstr, "$$")))
+        cmdstr = argptr;
+      else
+        cmdstr += pos;
+      
+      pos = sprintf(cmdstr, " '");
       for(i = 0; i<l; i++)
         if(im->filename[i] == '\'')
         {
@@ -319,8 +321,14 @@ int r128_load_file(struct r128_ctx *c, struct r128_image *im)
           cmdstr[pos++] = im->filename[i];
       
       cmdstr[pos++] = '\'';
+      if((argptr = strstr(c->loader, "$$")))
+      {
+        int xl;
+        memcpy(cmdstr + pos, argptr + 2, xl = strlen(argptr + 2));
+        pos += xl;
+      }
+      
       cmdstr[pos] = 0;
-      args[2] = cmdstr;
       
       execv(args[0], args); 
       r128_fail(c, "Cannot start loader for file %s: execv(): %s\n", im->filename, strerror(errno));
@@ -333,7 +341,6 @@ int r128_load_file(struct r128_ctx *c, struct r128_image *im)
       break;
   }
   
-
   /* Read data */
   maxfd = sp_stderr[1];
   if(sp_stdout[1] > maxfd) maxfd = sp_stdout[1];
@@ -348,8 +355,8 @@ int r128_load_file(struct r128_ctx *c, struct r128_image *im)
     
     FD_ZERO(&fds);
 
-    FD_SET(sp_stderr[1], &fds);
-    FD_SET(sp_stdout[1], &fds);
+    FD_SET(sp_stderr[0], &fds);
+    FD_SET(sp_stdout[0], &fds);
 
     if(select(maxfd + 1, &fds, NULL, NULL, &tv) < 0)
     {
@@ -360,9 +367,9 @@ int r128_load_file(struct r128_ctx *c, struct r128_image *im)
       }
     }
     
-    if(FD_ISSET(sp_stdout[1], &fds))
+    if(FD_ISSET(sp_stdout[0], &fds))
     {
-      int l = read(sp_stdout[1], data + im->file_size, alloc_size - im->file_size);
+      int l = read(sp_stdout[0], data + im->file_size, alloc_size - im->file_size);
       if(l < 0)
       {
         r128_log(c, R128_ERROR, "Cannot proceed with loading file %s from loader: read(stdout): %s\n", im->filename, strerror(errno));
@@ -393,9 +400,9 @@ int r128_load_file(struct r128_ctx *c, struct r128_image *im)
         break; /* EOF! Great! */
     }
     
-    if(FD_ISSET(sp_stderr[1], &fds))
+    if(FD_ISSET(sp_stderr[0], &fds))
     {
-      int l = read(sp_stderr[1], stderr_buf, 1023);
+      int l = read(sp_stderr[0], stderr_buf, 1023);
       if(l < 0)
       {
         r128_log(c, R128_ERROR, "Cannot proceed with loading file %s from loader: read(stderr): %s\n", im->filename, strerror(errno));
@@ -418,8 +425,8 @@ int r128_load_file(struct r128_ctx *c, struct r128_image *im)
       }
   }
 
-  close(sp_stderr[1]);
-  close(sp_stdout[1]);
+  close(sp_stderr[0]);
+  close(sp_stdout[0]);
 
   /* Get rid of the loader process */
   kill(childpid, SIGKILL);

@@ -152,39 +152,13 @@ void r128_update_best_code(struct r128_ctx *ctx, struct r128_image *im, u_int8_t
 int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *line, int w, double ppos, double uwidth, double threshold)
 {
   int rc = R128_EC_NOEND;
-//  int i_thresh = lrint(threshold / uwidth);
-  static double weights[] = {1.0, 1.02, 0.98, 1.01, 0.99};
+  static double weights[] = {1.0, 1.05, 0.95, 1.02, 0.98};
   double new_ppos;
   
-  while(lrint(ceil(ppos + 3.0 * uwidth)) < w) 
+  while(lrint(ceil(ppos)) < w) 
   {
-//    int i, cs, i_ppos, offset;
     int cs, i;
     u_int32_t code;
-    
-    /* Przejście między symbolami: Biały/Czarny */
-
-    /* Pod ppos powinien być czarny piksel, a przed - biały */
-    
-/*    i_ppos = lrint(floor(ppos));
-    
-    for(offset = 0; offset < 5; offset++)
-    {
-      if(line[i_ppos + offset] < i_thresh && line[i_ppos + offset - 1] > i_thresh)
-      {
-        printf("corrected by %d; @%d: %d %d\n", offset, i_ppos + offset - 1, line[i_ppos + offset - 1], line[i_ppos + offset]);
-        i_ppos += offset;
-        break;
-      }
-      if(line[i_ppos - offset] < i_thresh && line[i_ppos - offset - 1] > i_thresh)
-      {
-        printf("corrected by %d; @%d: %d %d\n", offset, i_ppos - offset - 1, line[i_ppos - offset - 1], line[i_ppos - offset]);
-        i_ppos -= offset;
-        break;
-      }
-    }  
-    ppos = i_ppos;*/
-//    ppos = floor(ppos);
     
     for(i = 0; i<5; i++) 
     {
@@ -193,17 +167,10 @@ int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *line,
     
       if(!((code & 2) || (!(code & 1)) || (!(code & 0x800)) || (code & 0x1000) || cs == -1))
         break;
-      {
-//        int i;
-//        fprintf(stderr, " ER");
-//        for(i = 12; i>=0; i--)
-//          fprintf(stderr, ((code >> i) & 0x1) ? "1" : "0");
-      }
     }
     
     if(i == 5)
     {
-//        fprintf(stderr, "\n");
         r128_update_best_code(ctx, img, ctx->codebuf, ctx->codepos);
         return R128_EC_SYNTAX; 
     }
@@ -217,11 +184,10 @@ int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *line,
       assert((ctx->codebuf = (u_int8_t*) r128_realloc(ctx, ctx->codebuf, sizeof(u_int8_t) * ctx->codealloc)));
     }
     
-//    fprintf(stderr, "[%d] ", cs); 
     if(cs == 106)
     {
-      r128_update_best_code(ctx, img, ctx->codebuf, ctx->codepos);
       /* Proper STOP! */
+      r128_update_best_code(ctx, img, ctx->codebuf, ctx->codepos);
       return r128_parse(ctx, img, ctx->codebuf, ctx->codepos);
     }
     ppos = new_ppos - uwidth;
@@ -252,8 +218,7 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
   {
     u_int32_t start_symbol = r128_read_bits(ctx, line, w, ppos, uwidth, threshold, 
                       0x0d01, 0x3fc1, 65536, &ppos);
-    
-    if(lrint(ceil(ppos + 3.0 * uwidth)) >= w) break; /* Nothing interesting found */
+    if(lrint(ceil(ppos + 3.0 * 11.0 * uwidth)) >= w) break; /* Nothing interesting found - start comes too late for a meaningful code! */
     
     start_symbol &= 0x3fff;
 
@@ -264,14 +229,13 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
 
       /* Perhaps we found a code! */
       rc = minrc(rc, r128_read_code(ctx, im, line, w, ppos - uwidth, uwidth, threshold));
-
       /* Have we succeeded? */
       if(R128_ISDONE(ctx, rc)) 
         return rc;
     }
     
-    /* Go back a little and try again */
-    ppos -= uwidth * 6.0;
+    /* Go back half a symbol and try again */
+    ppos -= uwidth * 6.0; 
   }
   
   return rc;

@@ -52,7 +52,7 @@ void r128_defaults(struct r128_ctx *c)
   c->codebuf = (u_int8_t*) r128_malloc(c, c->codealloc * sizeof(int));
 }
 
-int help(char *progname, int verbosity)
+int help(char *progname, int vb)
 {
   printf("rapid128 barcode scanner, (c) 2015 Mateusz 'mteg' Golicz\n");
   printf("Usage: %s [options] <file1> [<file2> [<file3> ...]]\n", progname);
@@ -60,38 +60,104 @@ int help(char *progname, int verbosity)
   printf("Available options:\n");
   printf(" -h         Print help and quit\n");
   printf(" -hh        Print extended help and quit\n");
-  printf("Available options:\n");
+  printf("\n");
   printf("BASIC SCANNER PARAMETERS\n");
   printf(" -wa <pix>  Minimum expected width of thinnest bar in pixels\n");
   printf(" -wb <pix>  Maximum expected width of thinnest bar in pixels\n");
   printf(" -mh <lvl>  High (white) threshold for cutting margins\n");
   printf(" -ml <lvl>  Low (black) threshold for cutting margins\n");
+  if(vb == 2)
+  {
+    printf("Please carefully select a good range for -wa / -wb. These options practically "
+           "define a range of horizontal resolutions to try and thus affect both detection and performance. "
+           "Barcodes sized so that their thinnest "
+           "bars are outside the given range will not be detected. On the other hand, too wide "
+           "range of expected horizontal resolutions will make rapid128 run much slower.\n");
+    printf("Both range ends might be given as floating point values. Note that rapid128 can manage "
+           " barcodes that are scanned at a resolution of less than 1 pixel per thinnest bar "
+           "(down to approx. 0.7 - 0.9).\n");
+  }
   printf("\n");
   printf("PERFORMANCE TUNING\n");
   printf(" -ch <pix>  Expected minimal code height\n");
+  printf(" -nb        Do not use blurring at all\n");
   printf(" -bh <pix>  Blurring height\n");
   printf(" -s  <strg> Configure scanning strategy\n"); 
+  printf(" -da <unts> Minimum width scans resolution (pass 1 - uppercase H)\n");
+  printf(" -db <unts> Minimum width scans resolution (pass 2 - lowercase h)\n");
+  if(vb == 2)
+  {
+    printf("Expected minimal height affects speed, but not detection. In first pass, rapid128 only"
+           " scans every -ch line of the image. Subsequent passes will then scan all lines. However, selecting"
+           " a good -ch will drastically increase speed of detection in case of clearly preserved codes.\n");
+    printf("In one of the later passes, rapid128 applies a vertical blur to the image and repeats the scan. "
+           "This sometimes improves situation in presence of noise (especially fading toner etc.). Use -bh to "
+           "specify blurring range (default is half of expected code width). Use -nb in case your codes are "
+           " likely to be slightly rotated - vertical blur will only make situation worse\n");
+           
+  }
   printf("\n");
   printf("BATCH PROCESSING\n");
   printf(" -bs <cnt>  Batch size - number of files processed at once\n");
   printf(" -bt <secs> Time limit for each batch\n");
+  if(vb == 2)
+  {
+    printf("Without -bs, files are processed one by one. However, if a batch size is given with -bs, rapid128 "
+           "will load and scan <cnt> files at once. Note that this may use a lot of RAM (unless -mm is given too). \n"
+           "Parallel processing of multiple files makes sense especially with -bt option. If a time limit is "
+           "specified, rapid128 will first detect codes in 'easiest' files, and then use all remaining time "
+           "to detect codes in noisiest and most difficult files.\n");
+  }
   printf("\n");
   printf("FILE INPUT\n");
   printf(" -lc <cmd>  Set loader command (spacebar + file name is appended at the end)\n");
   printf(" -lt <secs> Time limit for the loader command\n");
+  if(vb == 2)
+  {
+    printf("Normally, rapid128 processes only PGM files. To load other file formats, a loader command"
+           " must be specified. The loader is executed for every file provided after the option list."
+           "Use two dollars ($$) in place where the file name should be inserted. If no two dollars"
+           " are present in the loader command, the file name will be appended at the end\n");
+    printf("Example 1: -lc 'pdfimages -f 0 -l 0 -j $$ a ; jpegtran -rotate 270 a-000.jpg | jpegtopnm -dct fast'\n");
+    printf("Example 2: -lc '/usr/bin/gs -dSAFER -dBATCH -dQUIET -dNOPAUSE -sDEVICE=pgmraw -sOutputFile=- -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -dLastPage=1 -r300 '\n");
+    
+  }
   printf("\n");
   printf("MEMORY MANAGEMENT\n");
   printf(" -mm        Save RAM: write to temporary files and mmap() everything\n");
   printf(" -mp <pfx>  Prefix for temporary files (NNNNNN.pgm is appended)\n"); 
   printf(" -ma        Never mmap() anything, load all into RAM\n");
+  if(vb == 2)
+  {
+    printf("By default, to process a grayscale PNM file, rapid128 uses mmap() instead of loading it into RAM."
+           " Everything else is placed in RAM: conversions from P4 or P6 (RGB) files, output from loader, as well as blurred "
+            "versions of images. The -ma or -mm options switch between two opposite ends of this compromise. "
+            "Specifying -mm will cause rapid128 to save RAM and use temporary files for all intermediate "
+            "images. These files will then be mmap()ed for processing. This makes sense with very large "
+            "batches and a SSD drive. On the other hand, -ma will cause rapid128 to load and buffer everything "
+            "in RAM and abstain from any use of mmap()\n");
+  }
   printf("\n");
   printf("REPORTING AND DEBUGGING\n");
   printf(" -a         Continue scanning the document even after a valid code is found.\n");
-  printf(" -e         Extended reporting: print file name, time spent, best result, code symbols.\n");
+  printf(" -e         Extended reporting: print file name, tactics, time spent, best result, code symbols.\n");
   printf(" -v         Increase out-of-band verbosity level\n");
   printf(" -q         Decrease out-of-band verbosity level\n");
   printf(" -nd        Do not delete temporary files (use with -mm)\n");
   printf(" -nm        Do not crop lines\n");
+  if(vb == 2)
+  {
+    printf("rapid128 is designed for images containing just ONE barcode. As soon as a valid code is found in an image, "
+           "processing of that image is stopped and rapid128 proceeds to next images. Use -a to continue processing the "
+           "file even if a barcode has already been found. Note that codes will be reported many, many times, since "
+           "no detection of distinct codes is provided.\n");
+    printf("By default, rapid128 shaves groups of white or black pixels off left and right edge of every line. "
+           "For the purpose of this operation, black and white levels are controlled by -mh / -ml (0 - 255). "
+           "Use -nm to disable this feature. In most cases, however, this will only decrease performance and "
+           "not affect detection in any way. If a code is detected with -nm that was not detected otherwise, it"
+           " is most probably a bug\n");
+  
+  }
   return 0;
 }
 
@@ -104,7 +170,7 @@ int main(int argc, char ** argv)
   r128_defaults(&ctx);
   clock_gettime(CLOCK_MONOTONIC, &ctx.startup);
   
-  while((c = getopt(argc, argv, "abcehlmnqvs:w")) != EOF)
+  while((c = getopt(argc, argv, "abcdehlmnqvs:w")) != EOF)
   {
     switch(c)
     {
@@ -123,6 +189,14 @@ int main(int argc, char ** argv)
         {
           case 'h': ctx.expected_min_height = intopt(&ctx, "-ch", optarg); break;
           default:  r128_fail(&ctx, "Unknown option: -c%c\n", c); break;
+        }
+        break;
+      case 'd':
+        switch((c = getopt(argc, argv, "a:b:")))
+        {
+          case 'a': ctx.min_cuw_delta1 = floatopt(&ctx, "-da", optarg); break;
+          case 'b': ctx.min_cuw_delta2 = floatopt(&ctx, "-db", optarg); break;
+          default:  r128_fail(&ctx, "Unknown option: -d%c\n", c); break;
         }
         break;
       
@@ -148,10 +222,11 @@ int main(int argc, char ** argv)
         }
         break;
       case 'n':
-        switch((c = getopt(argc, argv, "dm")))
+        switch((c = getopt(argc, argv, "dmb")))
         {
           case 'd': ctx.flags |= R128_FL_KEEPTEMPS; break;
           case 'm': ctx.flags |= R128_FL_NOCROP; break;
+          case 'b': ctx.flags |= R128_FL_NOBLUR; break;
         }
         break;
       case 'q': ctx.logging_level--; break;

@@ -158,8 +158,11 @@ struct r128_image * r128_blur_image(struct r128_ctx * ctx, int n)
 
   i->root = src;
   i->best_rc = R128_EC_NOIMAGE;
+  i->bestcode = r128_malloc(ctx, R128_EXP_CODE_MAX);
+  i->bestcode_alloc = R128_EXP_CODE_MAX;
   i->fd = -1;
-
+  
+  if(ctx->flags & R128_FL_NOBLUR) return i;
   r128_log(ctx, R128_DEBUG1, "Preparing a blurred image for %s\n", src->filename);
 
   i->width = src->width;
@@ -217,7 +220,7 @@ void r128_free_image(struct r128_ctx *c, struct r128_image *im)
     munmap(im->file, im->file_size);
   else
     r128_free(im->file);
-  
+
   im->fd = -1;
   im->lines = NULL;
   im->file = NULL;
