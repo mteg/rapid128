@@ -58,7 +58,7 @@ struct r128_ctx
   double min_uwidth, max_uwidth;
   double min_doc_cuw, max_doc_cuw, doc_cuw_span;
 
-  double threshold;
+  double threshold, def_threshold;
   int margin_low_threshold, margin_high_threshold;
   
   int min_len, max_gap;
@@ -86,6 +86,7 @@ struct r128_ctx
   double loader_limit;
   
   double last_report;
+  u_int8_t rotation, def_rotation, rgb_channel;
 };
 
 

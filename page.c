@@ -187,6 +187,9 @@ int r128_run_strategy(struct r128_ctx *ctx, char *strategy, int start, int len)
      
      We take an extra margin and assume 6.
   */
+  ctx->threshold = ctx->def_threshold;
+  ctx->rotation = ctx->def_rotation;
+  
   ctx->min_len = lrint(floor(4.0 * 13.0 * ctx->min_uwidth));
   ctx->max_gap = lrint(ceil(6.0 * ctx->max_uwidth));
   

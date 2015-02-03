@@ -39,7 +39,7 @@ void r128_defaults(struct r128_ctx *c)
   c->strategy = "IHWO@0.6,iHWO,IHWo,iHWo,IHwO,iHwO,IHwo,iHwo,IhWO,ihWO,IhWo,ihWo,IhwO,ihwO,Ihwo,ihwo";
   c->min_uwidth = 0.9;
   c->max_uwidth = 4;
-  c->threshold = 0.5;
+  c->def_threshold = 0.6;
   c->margin_low_threshold = 20;
   c->margin_high_threshold = 235;
   c->min_cuw_delta2 = 2;
@@ -47,6 +47,7 @@ void r128_defaults(struct r128_ctx *c)
   c->expected_min_height = 8;
   c->temp_prefix = "r128temp";
   c->batch_size = 1;
+  c->rgb_channel = 4;
 
   c->codealloc = 128;
   c->codebuf = (u_int8_t*) r128_malloc(c, c->codealloc * sizeof(int));
@@ -96,6 +97,30 @@ int help(char *progname, int vb)
            " likely to be slightly rotated - vertical blur will only make situation worse\n");
            
   }
+
+  printf("\n");
+  printf("IMAGE INTERPRETATION\n");
+  printf(" -t <float> Threshold.\n");
+  printf(" -r         Codes are not horizontal and oriented left to right, but rather rotated by 90 degress clockwise (use twice/three times to indicate 180/270)\n");
+  printf(" -ic R/G/B  Use only the indicated channel of RGB images\n");
+  if(vb == 2)
+  {
+    printf("By default, rapid128 only scans for codes placed horizontally, with normal left to right orientation. "
+           "Use -r to scan codes oriented from top to bottom (90 degree rotation), -rr to scan codes from pages rotated 180 degrees"
+           "or -rrr to scan codes rotated 270 degrees (bottom to top).\n"
+           "If you would like to scan various orientations in sequence, define your own scanning strategy (-s). This option will then be applied only for first tactics (if no instructions regarding rotation are specified in the tactics).\n"
+           "Note that rapid128 cheats in order to save time: rotations by 180 and 270 are implemented as mirror flips.\n"
+           "All processing in rapid128 takes place in grayscale. In case a P6 (RGB) image is provided as input, it will "
+           "be reduced to grayscale first. The -ic option is used to select only one channel from RGB of images. "
+           "For example, if you have scans of documents with handwritten signatures likely to be in blue pen, use -ic R or -ic G "
+           "(channels other than blue) - this will improve detection of codes accidentaly overwritten by handwritten signatures.\n"
+           "By default, RGB images are converted to grayscale by averaging all three channels (R + G + B) / 3.0. Note that "
+           "-ic does not affect processing grayscale or black-and-white inputs at all\n"
+           "Use -t to alter decision threshold for classifying pixels as black (1) or white (0). Use negative threshold for "
+           "inverted images. Use threshold larger than 0.5 for images that are a bit too white (fading toner etc) "
+           "and smaller than 0.5 for images that are a bit too black (after processing by a 'blackening' copy machine)\n");
+  }
+
   printf("\n");
   printf("BATCH PROCESSING\n");
   printf(" -bs <cnt>  Batch size - number of files processed at once\n");
@@ -158,6 +183,7 @@ int help(char *progname, int vb)
            " is most probably a bug\n");
   
   }
+
   return 0;
 }
 
@@ -170,7 +196,7 @@ int main(int argc, char ** argv)
   r128_defaults(&ctx);
   clock_gettime(CLOCK_MONOTONIC, &ctx.startup);
   
-  while((c = getopt(argc, argv, "abcdehlmnqvs:w")) != EOF)
+  while((c = getopt(argc, argv, "abcdehilmnqrvs:t:w")) != EOF)
   {
     switch(c)
     {
@@ -202,6 +228,28 @@ int main(int argc, char ** argv)
       
       case 'e': ctx.flags |= R128_FL_EREPORT; break;
       case 'h': nh++; break;
+      case 'i':
+        switch((c = getopt(argc, argv, "c:")))
+        {
+          case 'c': 
+            if(strlen(optarg) != 1)
+              r128_fail(&ctx, "Invalid image channel specification: %s, use R, G or B\n", optarg);
+              
+            if(*optarg == 'R')
+              ctx.rgb_channel = 0;
+            else if(*optarg == 'G')
+              ctx.rgb_channel = 1;
+            else if(*optarg == 'B')
+              ctx.rgb_channel = 2;
+            else
+              r128_fail(&ctx, "Invalid image channel specification: %s, use R, G or B\n", optarg);            
+
+            break;
+          
+          default:  r128_fail(&ctx, "Unknown option: -i%c\n", c); break;
+        }
+        break;
+        
       case 'l':
         switch((c = getopt(argc, argv, "c:t:")))
         {
@@ -230,8 +278,16 @@ int main(int argc, char ** argv)
         }
         break;
       case 'q': ctx.logging_level--; break;
-      case 'v': ctx.logging_level++; break;        
+      case 'r':
+        ctx.def_rotation++;
+        ctx.def_rotation = ctx.def_rotation % 4;
+        break;
       case 's': assert((ctx.strategy = strdup(optarg))); break;
+      case 't':
+        ctx.def_threshold = floatopt(&ctx, "-t", optarg);
+        break;
+        
+      case 'v': ctx.logging_level++; break;        
       case 'w':
         switch((c = getopt(argc, argv, "a:b:")))
         {
