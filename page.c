@@ -105,7 +105,10 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
   int offs, offs_min = 0, offs_max = 4;
   int h_min = ctx->expected_min_height, h_max;
   char *param_input;
-  double uwidth, delta = ctx->uw_delta1;
+
+  int min_uw_ctr, max_uw_ctr;
+  int uw_ctr, min_uw_step = 4, max_uw_step = ctx->uw_steps2;
+  
 
   int codes_found = 0;
   
@@ -129,16 +132,29 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
   
   if(strstr(tactics, "o")) { offs_min = 4; offs_max = 8; }
   if(strstr(tactics, "h")) { h_min = 1; h_max = ctx->expected_min_height; }
-  if(strstr(tactics, "w")) delta = ctx->uw_delta2;
+  if(strstr(tactics, "w")) { min_uw_step = 1; max_uw_step = 4; }
 
 
   r128_log(ctx, R128_DEBUG1, "Now assuming tactics '%s'\n", tactics);
   r128_configure_rotation(ctx);
   
+
+  min_uw_ctr = log2_ceil(ctx->uw_steps2 / max_uw_step);
+  max_uw_ctr = log2_ceil(ctx->uw_steps2 / min_uw_step);
+  memset(ctx->uw_space_visited, 0, ctx->uw_steps2);
+
   for(offs = offs_min; offs < offs_max && (codes_found < codes_to_find || (ctx->flags & R128_FL_READALL)); offs++)
-    for(uwidth = ctx->min_uwidth; uwidth <= ctx->max_uwidth; uwidth *= 1.0 + 1.0/13.0*delta)
+    for(uw_ctr = min_uw_ctr; uw_ctr < max_uw_ctr; uw_ctr++)
     {
       int i;
+      int uw_idx = (ctx->uw_steps2 * bfsguidance(uw_ctr)) >> 16;
+      double uwidth;
+      
+      
+      if(ctx->uw_space_visited[uw_idx]) continue;
+      ctx->uw_space_visited[uw_idx] = 1;
+
+      uwidth = ctx->uwidth_space[uw_idx];
       
       /* For all images */
       for(i = 0; i<len; i++)
@@ -247,3 +263,35 @@ int r128_run_strategy(struct r128_ctx *ctx, char *strategy, int start, int len)
   return codes_found;
 }
 
+void r128_compute_uwidth_space(struct r128_ctx *ctx)
+{
+  double uw = ctx->min_uwidth;	
+  int i = 0, uws_alloc = 128;
+  if(ctx->uw_steps2) uws_alloc = ctx->uw_steps2;
+  ctx->uwidth_space = (double*) r128_malloc(ctx, sizeof(double) * uws_alloc);
+
+  if(!ctx->uw_steps2)
+  {
+    /* Defaults: small step is 1 + 1/13 * 0.25, big step is 1 + 1/13 * 1.0 */
+    
+    for(i = 0; uw <= ctx->max_uwidth; uw *= 1.0 + 1.0/13.0 * 0.25)
+    {
+      ctx->uwidth_space[i++] = uw;
+      if(i == uws_alloc)
+        ctx->uwidth_space = (double*) r128_realloc(ctx, ctx->uwidth_space, sizeof(double) * (uws_alloc = uws_alloc * 2));
+    }
+    
+    ctx->uw_steps2 = i;
+    /* small step ^ 4 = big step */
+    ctx->uw_steps1 = ctx->uw_steps2 / 4;
+  }
+  else
+  {
+    double delta = pow(ctx->max_uwidth / ctx->min_uwidth, 1.0 / ((double) ctx->uw_steps2));
+    for(i = 0; i<uws_alloc; i++, uw *= delta)
+      ctx->uwidth_space[i] = uw;
+  }
+  if(!ctx->uw_steps1) ctx->uw_steps1 = ctx->uw_steps2;
+  
+  ctx->uw_space_visited = (u_int8_t*) r128_malloc(ctx, ctx->uw_steps2);
+}

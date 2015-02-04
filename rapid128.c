@@ -42,8 +42,10 @@ void r128_defaults(struct r128_ctx *c)
   c->def_threshold = 0.6;
   c->margin_low_threshold = 20;
   c->margin_high_threshold = 235;
+/*
   c->uw_delta1 = 1.0;
   c->uw_delta2 = 0.25;
+*/
   c->expected_min_height = 8;
   c->temp_prefix = "r128temp";
   c->batch_size = 1;
@@ -61,6 +63,7 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
   printf("Available options:\n");
   printf(" -h         Print help and quit\n");
   printf(" -hh        Print extended help and quit\n");
+  printf(" -V         Print version and quit\n");
   printf("\n");
   printf("BASIC SCANNER PARAMETERS\n");
   printf(" -wa <pix>  Minimum expected width of thinnest bar in pixels [%.1f]\n", ctx->min_uwidth);
@@ -82,10 +85,10 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
   printf("PERFORMANCE TUNING\n");
   printf(" -ch <pix>  Expected minimal code height [%d]\n", ctx->expected_min_height);
   printf(" -nb        Do not use blurring at all\n");
-  printf(" -bh <pix>  Blurring height [%d]\n", ctx->blurring_height ? ctx->blurring_height : (ctx->expected_min_height / 2));
+  printf(" -bh <pix>  Blurring height [%d]\n", ctx->blurring_height);
   printf(" -s  <strg> Configure scanning strategy\n"); 
-  printf(" -da <dlta> Unit width search increment (pass 1 - uppercase H) [%.1f]\n", ctx->uw_delta1);
-  printf(" -db <dlta> Unit width search increment (pass 2 - lowercase h) [%.1f]\n", ctx->uw_delta2);
+  printf(" -u1 <stpc> Unit width search step count (pass 1 - uppercase H) [%d]\n", ctx->uw_steps1);
+  printf(" -u2 <stpc> Unit width search step count (pass 2 - lowercase h) [%d]\n", ctx->uw_steps2);
   if(vb == 2)
   {
     printf("Expected minimal height affects speed, but not detection. In first pass, rapid128 only"
@@ -95,11 +98,10 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
            "This sometimes improves situation in presence of noise (especially fading toner etc.). Use -bh to "
            "specify blurring range (default is half of expected code width). Use -nb in case your codes are "
            " likely to be slightly rotated - vertical blur will only make situation worse\n");
+    printf("The -u1 and -u2 options define number of steps in which to guess the thinnest bar size. "
+           "By default, they are computed to match -wa and -wb. You can alter (lower) the precomputed values to "
+           "gain some speed at the cost of detection rate\n");
     printf("Scanning strategies are explained at the end of this help.\n");
-    printf("The -da / -db options control how proper unit width is determined. Search starts from unit = -wa and "
-           "then, in every pass, unit = unit * 1/13 * <delta>. Thus, smaller numbers mean finer search "
-           "in range between -wa / -wb. To gain some speed, you can try to double the default values; this "
-           "may however have a negative impact on detection from noisy sources.\n");
   }
 
   printf("\n");
@@ -142,7 +144,7 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
   }
   printf("\n");
   printf("FILE INPUT\n");
-  printf(" -lc <cmd>  Set loader command (spacebar + file name is appended at the end) [%s]\n", ctx->loader);
+  printf(" -lc <cmd>  Set loader command (spacebar + file name is appended at the end) [%s]\n", ctx->loader ? ctx->loader : "");
   printf(" -lt <secs> Time limit for the loader command [%.1f]\n", ctx->loader_limit);
   if(vb == 2)
   {
@@ -197,7 +199,7 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
            "(in fractions of bar width). "
            "In order to speed up detection, configuration space for each of the three variables gets subdivided "
            "into two parts: coarse and fine. Scanning strategy tells rapid128 which parts of the configuration "
-           "space explore first. It usually makes a lot of sense to do a coarse brute force first: for example, "
+           "space explore first. It usually makes a lot of sense to do a coarse brute force first in the first place: for example, "
            "coarse vertical position space consists of only 1/<expected_min_barcode_height> lines that are spaced "
            "apart vertically by <expected_min_barcode_height>. If we are dealing with a clean, undamaged scan, "
            "it is sufficient to analyze only this small percentage of lines - one of them will contain the code anyway.\n"
@@ -206,7 +208,7 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
            "Scanning strategy consists of comma-separated search instructions, called 'tactics'. These instructions select "
            "parts of the complete configuration space to consider and are executed sequentially for every batch of images. "
            "Every tactis is a concatenated string of the following letters:\n"
-           " W or w   Select coarse (-da) or fine (-db) smallest bar width search.\n"
+           " W or w   Select coarse (-u1) or fine (-u2) smallest bar width search.\n"
            " H or h   Select coarse (-ch) or fine (every line) vertical position search.\n"
            " O or o   Select coarse (0, 0.5, 0.25, 0.75 times smallest bar width) or fine (every 1/8th) horizontal offset search.\n"
            " I or i   Use normal or vertically blurred image.\n"
@@ -235,7 +237,7 @@ int main(int argc, char ** argv)
   r128_defaults(&ctx);
   clock_gettime(CLOCK_MONOTONIC, &ctx.startup);
   
-  while((c = getopt(argc, argv, "abcdehilmnqrvs:t:w")) != EOF)
+  while((c = getopt(argc, argv, "abcehilmnqrvs:t:uwV")) != EOF)
   {
     switch(c)
     {
@@ -254,14 +256,6 @@ int main(int argc, char ** argv)
         {
           case 'h': ctx.expected_min_height = intopt(&ctx, "-ch", optarg); break;
           default:  r128_fail(&ctx, "Unknown option: -c%c\n", c); break;
-        }
-        break;
-      case 'd':
-        switch((c = getopt(argc, argv, "a:b:")))
-        {
-          case 'a': ctx.uw_delta1 = floatopt(&ctx, "-da", optarg); break;
-          case 'b': ctx.uw_delta2 = floatopt(&ctx, "-db", optarg); break;
-          default:  r128_fail(&ctx, "Unknown option: -d%c\n", c); break;
         }
         break;
       
@@ -325,6 +319,14 @@ int main(int argc, char ** argv)
       case 't':
         ctx.def_threshold = floatopt(&ctx, "-t", optarg);
         break;
+      case 'u':
+        switch((c = getopt(argc, argv, "1:2:")))
+        {
+          case '1': ctx.uw_steps1 = intopt(&ctx, "-u1", optarg); break;
+          case '2': ctx.uw_steps2 = intopt(&ctx, "-u2", optarg); break;
+          default:  r128_fail(&ctx, "Unknown option: -u%c\n", c); break;
+        }
+        break;
         
       case 'v': ctx.logging_level++; break;        
       case 'w':
@@ -335,11 +337,20 @@ int main(int argc, char ** argv)
           default:  r128_fail(&ctx, "Unknown option: -w%c\n", c); break;
         }
         break;
+      case 'V':
+#warning HARDCODED VERSION
+        r128_fail(&ctx, "rapid128 v0.9\n");
+        break;
       default:
         r128_fail(&ctx, "Unknown option: %c\n", c);
         break;
     }
   }
+
+  if(ctx.batch_size < 1) ctx.batch_size = 1;
+  if(ctx.blurring_height == 0)
+    ctx.blurring_height = ctx.expected_min_height / 2;
+  r128_compute_uwidth_space(&ctx);
   
   if(nh)
     return help(&ctx, argv[0], nh);
@@ -351,9 +362,6 @@ int main(int argc, char ** argv)
     return 1;
   }
   
-  if(ctx.batch_size < 1) ctx.batch_size = 1;
-  if(ctx.blurring_height == 0)
-    ctx.blurring_height = ctx.expected_min_height / 2;
   
   ctx.n_images = argc - optind;
   ctx.im = (struct r128_image*) r128_zalloc(&ctx, sizeof(struct r128_image) * ctx.n_images);

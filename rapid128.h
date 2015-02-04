@@ -56,6 +56,10 @@ struct r128_ctx
   
   /* min/max code unit width to assume */
   double min_uwidth, max_uwidth;
+  
+  /* search space for unit width */
+  double *uwidth_space;
+  u_int8_t *uw_space_visited;
 
   double threshold, def_threshold;
   int margin_low_threshold, margin_high_threshold;
@@ -63,7 +67,7 @@ struct r128_ctx
   int min_len, max_gap;
   
   /* how far to go with resolution tests */
-  double uw_delta1, uw_delta2;
+  int uw_steps1, uw_steps2;
 
   /* how far to go with line distance in BFS scan */
   int expected_min_height, blurring_height;
@@ -172,6 +176,7 @@ void r128_realloc_buffers(struct r128_ctx *c);
 int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img, double offset, double uwidth, int minheight, int maxheight);
 int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, int codes_to_find);
 int r128_run_strategy(struct r128_ctx *ctx, char *strategy, int start, int len);
+void r128_compute_uwidth_space(struct r128_ctx *ctx);
 
 struct r128_line *r128_get_line(struct r128_ctx *ctx, struct r128_image *im, int line, int rotation);
 void r128_alloc_lines(struct r128_ctx *ctx, struct r128_image *i);
