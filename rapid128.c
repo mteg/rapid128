@@ -42,8 +42,8 @@ void r128_defaults(struct r128_ctx *c)
   c->def_threshold = 0.6;
   c->margin_low_threshold = 20;
   c->margin_high_threshold = 235;
-  c->min_cuw_delta2 = 2;
-  c->min_cuw_delta1 = 10;
+  c->uw_delta1 = 1.0;
+  c->uw_delta2 = 0.25;
   c->expected_min_height = 8;
   c->temp_prefix = "r128temp";
   c->batch_size = 1;
@@ -84,8 +84,8 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
   printf(" -nb        Do not use blurring at all\n");
   printf(" -bh <pix>  Blurring height [%d]\n", ctx->blurring_height ? ctx->blurring_height : (ctx->expected_min_height / 2));
   printf(" -s  <strg> Configure scanning strategy\n"); 
-  printf(" -da <unts> Minimum width scans resolution (pass 1 - uppercase H) [%.1f]\n", ctx->min_cuw_delta1);
-  printf(" -db <unts> Minimum width scans resolution (pass 2 - lowercase h) [%.1f]\n", ctx->min_cuw_delta2);
+  printf(" -da <dlta> Unit width search increment (pass 1 - uppercase H) [%.1f]\n", ctx->uw_delta1);
+  printf(" -db <dlta> Unit width search increment (pass 2 - lowercase h) [%.1f]\n", ctx->uw_delta2);
   if(vb == 2)
   {
     printf("Expected minimal height affects speed, but not detection. In first pass, rapid128 only"
@@ -96,6 +96,10 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
            "specify blurring range (default is half of expected code width). Use -nb in case your codes are "
            " likely to be slightly rotated - vertical blur will only make situation worse\n");
     printf("Scanning strategies are explained at the end of this help.\n");
+    printf("The -da / -db options control how proper unit width is determined. Search starts from unit = -wa and "
+           "then, in every pass, unit = unit * 1/13 * <delta>. Thus, smaller numbers mean finer search "
+           "in range between -wa / -wb. To gain some speed, you can try to double the default values; this "
+           "may however have a negative impact on detection from noisy sources.\n");
   }
 
   printf("\n");
@@ -190,8 +194,7 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
            "Rapid128 scans barcodes using a brute force approach. There are couple of variables "
            "that need to be guessed to successfuly read a barcode: (1) narrowest bar width, "
            "(2) vertical position of the code, (3) horizontal offset of the beginning of the barcode "
-           "(in fractions of bar width). Rapid128 tries to guess all of these variables by bisecting "
-           "the search range, while also employing a breadth first search strategy. \n"
+           "(in fractions of bar width). "
            "In order to speed up detection, configuration space for each of the three variables gets subdivided "
            "into two parts: coarse and fine. Scanning strategy tells rapid128 which parts of the configuration "
            "space explore first. It usually makes a lot of sense to do a coarse brute force first: for example, "
@@ -203,18 +206,18 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
            "Scanning strategy consists of comma-separated search instructions, called 'tactics'. These instructions select "
            "parts of the complete configuration space to consider and are executed sequentially for every batch of images. "
            "Every tactis is a concatenated string of the following letters:\n"
-           " W or w   Select coarse or fine smallest bar width search.\n"
-           " H or h   Select coarse or fine vertical position search.\n"
-           " O or o   Select coarse or fine horizontal offsets search.\n"
+           " W or w   Select coarse (-da) or fine (-db) smallest bar width search.\n"
+           " H or h   Select coarse (-ch) or fine (every line) vertical position search.\n"
+           " O or o   Select coarse (0, 0.5, 0.25, 0.75 times smallest bar width) or fine (every 1/8th) horizontal offset search.\n"
            " I or i   Use normal or vertically blurred image.\n"
-           "Additionally, it is possible to specify a threshold (eg. '@0.5') or rotation (eg. ':rr') by appending "
+           "Additionally, it is possible to specify a threshold (eg. '@0.5') or rotation (eg. '/rr') by appending "
            "extra tags at the end of configuration space selectors. The selected rotation or threshold holds " 
            "for all subsequent tactics, until another rotation or threshold is configured.\n"
            "Please note that 'o' and 'w' parts of the configuration space make sense only in "
            "case of very wide and (possibly) damaged codes (smallest bar more than 3 - 5 pixels).\n"
            "Please consider using the following strategies:\n"
-           "- default - for best detection, worst speed\n"
-           "- IWHO,IWHO:r,IWhO:,IWhO:r  or similar - when not sure whether code will be horizontal or vertical (use rr and rrr for 180 and 270 guesses)\n"
+           "- default - for best detection of horizontal, left to right codes; worst speed\n"
+           "- IWHO,IWHO/r,IWhO/,IWhO/r  or similar - when not sure whether code will be horizontal or vertical (use rr and rrr for 180 and 270 guesses)\n"
            "- IWHO,IWhO,iWHO,iWhO   - for narrow codes, when speed is important and input material is of good quality\n"
            "- IWHO,IWhO   - when in need for very fast operation and not a lot of concern about undetected codes in low quality input.\n", ctx->strategy)  ;
   }
@@ -256,8 +259,8 @@ int main(int argc, char ** argv)
       case 'd':
         switch((c = getopt(argc, argv, "a:b:")))
         {
-          case 'a': ctx.min_cuw_delta1 = floatopt(&ctx, "-da", optarg); break;
-          case 'b': ctx.min_cuw_delta2 = floatopt(&ctx, "-db", optarg); break;
+          case 'a': ctx.uw_delta1 = floatopt(&ctx, "-da", optarg); break;
+          case 'b': ctx.uw_delta2 = floatopt(&ctx, "-db", optarg); break;
           default:  r128_fail(&ctx, "Unknown option: -d%c\n", c); break;
         }
         break;

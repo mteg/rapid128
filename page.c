@@ -102,10 +102,10 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
 int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, int codes_to_find)
 {
   static double offsets[] = {0, 0.5, 0.25, 0.75, 0.125, 0.375, 0.625, 0.875};
-  int w_ctr_min = 1, w_ctr_max, w_ctr;
   int offs, offs_min = 0, offs_max = 4;
   int h_min = ctx->expected_min_height, h_max;
   char *param_input;
+  double uwidth, delta = ctx->uw_delta1;
 
   int codes_found = 0;
   
@@ -115,7 +115,7 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
     if(sscanf(param_input + 1, "%lf", &ctx->threshold) != 1)
       r128_log(ctx, R128_NOTICE, "Invalid threshold in tactics: '%s', keeping to old threshold, equal %.2f.\n", tactics, ctx->threshold);
 
-  if((param_input = strstr(tactics, ":")))
+  if((param_input = strstr(tactics, "/")))
   {
    ctx->rotation = 0; param_input++;
    while(*(param_input++) == 'r')
@@ -123,38 +123,21 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
   }
 
   if(ctx->rotation & 1)
-  {
     h_max = ctx->max_width;
-    ctx->min_doc_cuw = ((double) ctx->min_height) / ctx->max_uwidth;
-    ctx->max_doc_cuw = ((double) ctx->max_height) / ctx->min_uwidth;
-  }
   else
-  {
     h_max = ctx->max_height;
-    ctx->min_doc_cuw = ((double) ctx->min_width) / ctx->max_uwidth;
-    ctx->max_doc_cuw = ((double) ctx->max_width) / ctx->min_uwidth;
-  }
   
-  /* Therefore, we span a range of...? */
-  ctx->doc_cuw_span = ctx->max_doc_cuw - ctx->min_doc_cuw;
-  
-  /* Number of subdivisions required to reach a difference less than cuw_delta1? */
-  w_ctr_max = ctx->wctrmax_stage1 = log2_ceil(lrint(ctx->doc_cuw_span / ctx->min_cuw_delta1));
-  ctx->wctrmax_stage2 = log2_ceil(lrint(ctx->doc_cuw_span / ctx->min_cuw_delta2));
-
   if(strstr(tactics, "o")) { offs_min = 4; offs_max = 8; }
   if(strstr(tactics, "h")) { h_min = 1; h_max = ctx->expected_min_height; }
-  if(strstr(tactics, "w")) { w_ctr_min = w_ctr_max; w_ctr_max = ctx->wctrmax_stage2; }
+  if(strstr(tactics, "w")) delta = ctx->uw_delta2;
 
 
   r128_log(ctx, R128_DEBUG1, "Now assuming tactics '%s'\n", tactics);
   r128_configure_rotation(ctx);
   
   for(offs = offs_min; offs < offs_max && (codes_found < codes_to_find || (ctx->flags & R128_FL_READALL)); offs++)
-    for(w_ctr = w_ctr_min; w_ctr < w_ctr_max; w_ctr++)
+    for(uwidth = ctx->min_uwidth; uwidth <= ctx->max_uwidth; uwidth *= 1.0 + 1.0/13.0*delta)
     {
-      /* First, determine document width in code units for this try */
-      double cuw = ctx->min_doc_cuw + ctx->doc_cuw_span * bfsguidance(w_ctr) / 65536.0;
       int i;
       
       /* For all images */
@@ -163,14 +146,6 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
         /* Get image */
         struct r128_image *img = &ctx->im[start + i];
 
-        /* Determine unit width to act with for this w_ctr */
-        double uwidth;
-        
-        if(ctx->rotation & 1)
-          uwidth = ((double) img->height) / cuw;
-        else
-          uwidth = ((double) img->width) / cuw;
-      
         if(ctx->batch_limit != 0.0)
         {
           double t = r128_time(ctx);
@@ -183,7 +158,7 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
       
         /* Check if we can do anything */
         if(!img->gray_data) continue;
-        if(uwidth < ctx->min_uwidth || uwidth > ctx->max_uwidth) continue;
+//        if(uwidth < ctx->min_uwidth || uwidth > ctx->max_uwidth) continue;
 
         if(strstr(tactics, "i"))
         {

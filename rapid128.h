@@ -56,7 +56,6 @@ struct r128_ctx
   
   /* min/max code unit width to assume */
   double min_uwidth, max_uwidth;
-  double min_doc_cuw, max_doc_cuw, doc_cuw_span;
 
   double threshold, def_threshold;
   int margin_low_threshold, margin_high_threshold;
@@ -64,9 +63,8 @@ struct r128_ctx
   int min_len, max_gap;
   
   /* how far to go with resolution tests */
-  double min_cuw_delta1, min_cuw_delta2;
-  int wctrmax_stage1, wctrmax_stage2;
-  
+  double uw_delta1, uw_delta2;
+
   /* how far to go with line distance in BFS scan */
   int expected_min_height, blurring_height;
 
