@@ -59,6 +59,8 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
 {
   printf("rapid128 barcode scanner, (c) 2015 Mateusz 'mteg' Golicz\n");
   printf("Usage: %s [options] <file1> [<file2> [<file3> ...]]\n", progname);
+  if(vb == 2)
+    printf("Use '-' as a file name to read from stdin\n");
   printf("\n");
   printf("Available options:\n");
   printf(" -h         Print help and quit\n");
@@ -357,7 +359,7 @@ int main(int argc, char ** argv)
   
   if(!argv[optind])
   {
-    fprintf(stderr, "Usage: %s [options] <file name>.pgm\n", argv[0]);
+    fprintf(stderr, "Usage: %s [options] <filename> [<filename> ...]\n", argv[0]);
     fprintf(stderr, "Run %s -h to get help\n", argv[0]);
     return 1;
   }

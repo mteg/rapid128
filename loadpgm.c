@@ -200,8 +200,11 @@ int r128_load_pgm(struct r128_ctx *c, struct r128_image *im, char *filename)
   int rc;
   
   r128_log(c, R128_DEBUG1, "Reading file %s.\n", filename);
-  if((im->fd = open(filename, O_RDONLY)) == -1)
-    return r128_log_return(c, R128_ERROR, R128_EC_NOFILE, "Cannot read file %s: open(): %s\n", filename, strerror(errno));
+  if(!strcmp(filename, "-"))
+    im->fd = 0;
+  else
+    if((im->fd = open(filename, O_RDONLY)) == -1)
+      return r128_log_return(c, R128_ERROR, R128_EC_NOFILE, "Cannot read file %s: open(): %s\n", filename, strerror(errno));
     
   if(c->flags & R128_FL_RAMALL)
   {
@@ -302,6 +305,7 @@ int r128_load_file(struct r128_ctx *c, struct r128_image *im)
       
       close(sp_stdout[0]);
       close(sp_stderr[0]);
+#warning OVERKILL - for mmap()ed loader results simply redirect to file
       dup2(sp_stdout[1], 1);
       dup2(sp_stderr[1], 2);
       
