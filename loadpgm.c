@@ -112,17 +112,22 @@ P1 (3 bytes)
   if(im->width < 1 || im->height < 1 || im->width > 65535 || im->height > 65536)
     return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: unsupported image size %d x %d.\n", filename, im->width, im->height);
   
-  b = skip_comments(b, &len);
-  b = skip_to_newline_a(b, &len, line, PGM_MAX_LINE - 1);
 
-  if(!len) 
-    return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: invalid header.\n", filename);
+  if(type > 4)
+  {
 
-  if(sscanf(line, "%d", &maxval) != 1)
-    return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: invalid range.\n", filename);
-  
-  if(maxval < 1 || maxval > 255)
-    return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: unsupported pixel value range %d.\n", filename, maxval);
+    b = skip_comments(b, &len);
+    b = skip_to_newline_a(b, &len, line, PGM_MAX_LINE - 1);
+
+    if(!len) 
+      return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: invalid header.\n", filename);
+      
+    if(sscanf(line, "%d", &maxval) != 1)
+      return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: invalid range.\n", filename);
+    
+    if(maxval < 1 || maxval > 255)
+      return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: unsupported pixel value range %d.\n", filename, maxval);
+  }
   
   explen = im->width * im->height;
   if(type == 4) explen = explen / 8;
@@ -167,10 +172,10 @@ P1 (3 bytes)
       switch(type)
       {
         case 4:
-          if((x & 7) == 0)
+          if((pix & 7) == 0)
             cr = *(b++);
-          line[x++] = (cr & 0x80) ? 255 : 0;
-          cr >>= 1;
+          line[x++] = (cr & 0x80) ? 0 : 255;
+          cr <<= 1;
           break;
         case 5: line[x++] = (*(b++)) * 255 / maxval; break;
         case 6: line[x++] = (b[0] + b[1] + b[2]) / 3; b+= 3; break;

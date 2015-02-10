@@ -108,7 +108,7 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
 
   printf("\n");
   printf("IMAGE INTERPRETATION\n");
-  printf(" -t <float> Threshold [%.2f].\n", ctx->threshold);
+  printf(" -t <float> Threshold [%.2f].\n", ctx->def_threshold);
   printf(" -r         Codes are not horizontal and oriented left to right, but rather rotated by 90 degress clockwise (use twice/three times to indicate 180/270)\n");
   printf(" -ic R/G/B  Use only the indicated channel of RGB images\n");
   if(vb == 2)
@@ -146,14 +146,14 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
   }
   printf("\n");
   printf("FILE INPUT\n");
-  printf(" -lc <cmd>  Set loader command (spacebar + file name is appended at the end) [%s]\n", ctx->loader ? ctx->loader : "");
+  printf(" -lc <cmd>  Set loader command [%s]\n", ctx->loader ? ctx->loader : "");
   printf(" -lt <secs> Time limit for the loader command [%.1f]\n", ctx->loader_limit);
   if(vb == 2)
   {
     printf("Normally, rapid128 processes only PGM files. To load other file formats, a loader command"
            " must be specified. The loader is executed for every file provided after the option list."
            "Use two dollars ($$) in place where the file name should be inserted. If no two dollars"
-           " are present in the loader command, the file name will be appended at the end\n");
+           " are present in the loader command, the file name will be appended at the end. The file name is escaped.\n");
     printf("Example 1: -lc 'pdfimages -f 0 -l 0 -j $$ a ; jpegtran -rotate 270 a-000.jpg | jpegtopnm -dct fast'\n");
     printf("Example 2: -lc '/usr/bin/gs -dSAFER -dBATCH -dQUIET -dNOPAUSE -sDEVICE=pgmraw -sOutputFile=- -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -dLastPage=1 -r300 '\n");
     

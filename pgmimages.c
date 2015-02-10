@@ -93,7 +93,7 @@ struct r128_line *r128_get_line(struct r128_ctx *ctx, struct r128_image *im, int
 void r128_alloc_lines(struct r128_ctx *ctx, struct r128_image *i)
 {
   assert((i->lines = (struct r128_line*) malloc(sizeof(struct r128_line) * (i->height + i->width))));
-  memset(i->lines, 0xff, sizeof(struct r128_line) * i->height * 2);
+  memset(i->lines, 0xff, sizeof(struct r128_line) * (i->height + i->width));
 }
 
 
@@ -134,7 +134,6 @@ u_int8_t * r128_alloc_for_conversion(struct r128_ctx *c, struct r128_image *im, 
       return NULL;
     }
 
-    
     line = r128_malloc(c, im->width);
     l = snprintf(pgmhdr, 256, "P5\n%d %d\n255\n", im->width, im->height);
     if(write(fd, pgmhdr, l) != l)
@@ -176,15 +175,15 @@ struct r128_image * r128_blur_image(struct r128_ctx * ctx, int n)
   i->fd = -1;
   
   if(ctx->flags & R128_FL_NOBLUR) return i;
-  r128_log(ctx, R128_DEBUG1, "Preparing a blurred image for %s\n", src->filename);
+  r128_log(ctx, R128_DEBUG1, "Preparing a blurred image for %s (%d x %d)\n", src->filename, src->width, src->height);
 
   i->width = src->width;
   i->height = src->height;
   if(!(result = r128_alloc_for_conversion(ctx, i, src->filename, "blurring", &fd, &tempnam)))
     return i;
-
+    
   r128_alloc_lines(ctx, i);
-
+  
   assert((accu = (int*) malloc(sizeof(int) * src->width)));
   memset(accu, 0, sizeof(int) * src->width);
   
@@ -212,7 +211,6 @@ struct r128_image * r128_blur_image(struct r128_ctx * ctx, int n)
       minus_line += src->width; 
     plus_line += src->width;
   }
-
 
   free(accu);
 

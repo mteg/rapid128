@@ -1,0 +1,89 @@
+1. OVERVIEW
+
+Rapid128 reads Code128 barcodes from bitmap images. It finds its application
+mainly in electronic document archiving systems, where it can be used to
+determine document identifiers (placed on documents as barcodes) from scans
+of customer-signed printouts.
+ 
+Rapid128 is lightweight, does not depend on any external libraries and is
+optimized for speed: it can process thousands of images at once, in some
+circumstances even directly from disk, not loading them into memory.
+
+Two main issues limiting the scope of usage of rapid128 are: (1) it
+reads only Code128 barcodes and (2) while it can handle many barcodes on a
+single page, it is optimized for a "hit and run" with whatever code it finds
+first.
+
+
+2. INPUT
+
+rapid128 works on PBM/PPM/PGM images. Files in other formats can be
+converted on-the-fly by rapid128, but only using an external converter, such
+as one of the utilities from the netpbm package (jpegtopnm, pngtopnm) or
+ghostscript.
+
+
+3. USAGE
+
+$ rapid128 filename.pbm 
+Basic usage; note it reads only left-to-right horizontal codes. First found
+code is printed on stdout. Handles codes with a minimal feature size
+(thinnest bar) between 0.9 ~ 4.0 pixels. 
+
+$ rapid128 -e -ch 48 -lc pngtopnm filename1.png filename2.png filename3.png
+PNG file input with extended reporting (extra information in addition to
+barcode contents)
+
+$ find . -iname 'rot*.pgm' | xargs rapid128 -ch 48 -e -bs 4 -bt 4.0
+  -s IWHO,IWHO/r,IWHO/rr,IWHO/rrr
+Batch scanning (4 files at once) with 4 second time limit for every batch.
+To speed up, only reads every 48th line of each image, but tries four
+different orientations of the barcode (left-to-right, top-to-bottom,
+right-to-left and bottom-to-top)
+
+$ /usr/local/bin/rapid128 -s IWHO,IWhO,IwHO,IWHO/rrr -wa 2.0 -wb 4.5 -ch 24
+  -lc '/usr/bin/pdfimages -f 1 -l 1 \$\$ <temp> ; cat <temp>-000.pbm
+  <temp>-000.pgm <temp>-000.ppm ; rm -f <temp>-000.pgm <temp>-000.ppm
+  <temp>-000.pbm' -e -r -bs 4 -bt 4.0 <file>
+A sophisticated call used in our document archiving system (optimized
+scanner parameters, PDF input, batch processing)
+
+Please consult built-in help (rapid128 -hh) for a detailed explanation of all options.
+
+
+4. NOTES
+
+Because this program was created for solving a particular task in a very
+particular system (see section 6), it is not yet a finished product and stil
+needs a lot of testing in various different scenarios. 
+
+Vertical blurring works only in the vertical direction. Which means it does
+not improve recognition of vertically placed codes at all.
+
+
+5. AUTHOR AND LICENSE
+
+All the initially commited code has been written by Mateusz 'mteg' Golicz
+<mtg@elsat.net.pl>. It is licensed under GPL version 2.
+
+
+6. BACKGROUND AND PROJECT'S FUTURE
+
+Most work on rapid128 took place during a single weekend. We have this small
+digital (scanned) document archiving system that used zbar for the purpose of
+barcode identification. We found out that zbar did not read some of the codes,
+even though they were perfectly preserved in the scans. Thus I decided to
+write our own app to do the job. Funny thing is that in the end, rapid128 
+does not read these codes as well. It turned out that there is a bug in TeX
+module that renders our codes in the first place (code128.tex) - one of code
+symbols is incorrectly defined in the module and thus drawn incorrectly. The
+bug only shows up when certain combinations of characters appear in the code
+or when checksum has to be encoded using that flawed symbol.
+
+To sum up, I wrote the program to solve a particular task - and right now,
+it does the job. I am a busy man and while I can answer a few questions and
+make minor improvements on popular demand, I will not be documenting the
+program further or developing any major features unless we need them in our
+company. Thus, if someone wants to develop the code, make it into a proper
+software package with all the seriousness of autoconf and a manual page -
+they are free to do it.
