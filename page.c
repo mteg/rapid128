@@ -182,6 +182,20 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
           if(!img->gray_data) continue;
         }
       
+        if(ctx->autoskip_rotations)
+        {
+          if(ctx->rotation & 1)
+          {
+            if(img->height > img->width) /* Rather rotated */
+              continue;
+          }
+          else
+          {
+            if(img->width > img->height) /* Rather rotated */
+              continue;
+          }
+        }
+      
         if(r128_page_scan(ctx, img, offsets[offs], uwidth, h_min, h_max) == R128_EC_SUCCESS)
         {
           codes_found++;

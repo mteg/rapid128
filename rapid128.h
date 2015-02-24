@@ -93,7 +93,7 @@ struct r128_ctx
                             double uwidth, double threshold,
                             u_int32_t pattern, u_int32_t mask, int read_limit, double *curpos);
   
-  u_int8_t rotation, def_rotation, rgb_channel;
+  u_int8_t rotation, def_rotation, rgb_channel, autoskip_rotations;
 };
 
 

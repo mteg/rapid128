@@ -110,6 +110,7 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
   printf("IMAGE INTERPRETATION\n");
   printf(" -t <float> Threshold [%.2f].\n", ctx->def_threshold);
   printf(" -r         Codes are not horizontal and oriented left to right, but rather rotated by 90 degress clockwise (use twice/three times to indicate 180/270)\n");
+  printf(" -I         Assume scans are A4 portrait pages and codes are horizontal; skip rotations not matching this scheme (eg. 0 deg when width > height).\n");
   printf(" -ic R/G/B  Use only the indicated channel of RGB images\n");
   if(vb == 2)
   {
@@ -239,7 +240,7 @@ int main(int argc, char ** argv)
   r128_defaults(&ctx);
   clock_gettime(CLOCK_MONOTONIC, &ctx.startup);
   
-  while((c = getopt(argc, argv, "abcehilmnqrvs:t:uwV")) != EOF)
+  while((c = getopt(argc, argv, "abcehiIlmnqrvs:t:uwV")) != EOF)
   {
     switch(c)
     {
@@ -284,7 +285,9 @@ int main(int argc, char ** argv)
           default:  r128_fail(&ctx, "Unknown option: -i%c\n", c); break;
         }
         break;
-        
+      case 'I':
+        ctx.autoskip_rotations = 1;
+        break;  
       case 'l':
         switch((c = getopt(argc, argv, "c:t:")))
         {
