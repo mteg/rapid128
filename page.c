@@ -38,7 +38,7 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
           double offset, double uwidth, int minheight, int maxheight)
 {
   int min_ctr, max_ctr, ctr, lines_scanned = 0, rc = R128_EC_NOCODE;
-  double t_start = r128_time(ctx);
+  double t_start = r128_time(ctx), t_spent;
   int linemax;
   
   if(ctx->rotation & 1)
@@ -86,13 +86,23 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
       r128_log(ctx, R128_NOTICE, "Code was found in page scan # %d, offs = %.3f, th = %.2f, heights = %d ~ %d, uwidth = %.2f, line = %d\n", 
             ctx->page_scan_id, offset, ctx->threshold, minheight, maxheight, uwidth, line_idx);
       img->best_rc = rc;
-      img->time_spent += r128_time(ctx) - t_start;
+      img->time_spent += (t_spent = r128_time(ctx) - t_start);
+      if(img->root)
+      {
+        img->root->best_rc = rc;
+        img->root->time_spent += t_spent;
+      }
       return img->best_rc;
     }
   }
   r128_log(ctx, R128_DEBUG1, "Page scan %d finished, scanned %d lines, best rc = %d\n", ctx->page_scan_id, lines_scanned, rc);
   img->best_rc = minrc(img->best_rc, rc);
-  img->time_spent += r128_time(ctx) - t_start;
+  img->time_spent += (t_spent = r128_time(ctx) - t_start);
+  if(img->root)
+  {
+    img->root->best_rc = minrc(img->root->best_rc, rc);
+    img->root->time_spent += t_spent;
+  }
 
   return img->best_rc;
 }
@@ -298,7 +308,8 @@ void r128_compute_uwidth_space(struct r128_ctx *ctx)
     
     ctx->uw_steps2 = i;
     /* small step ^ 4 = big step */
-    ctx->uw_steps1 = ctx->uw_steps2 / 4;
+    if((!ctx->uw_steps1) || (ctx->uw_steps1 > ctx->uw_steps2))
+      ctx->uw_steps1 = ctx->uw_steps2 / 4;
   }
   else
   {

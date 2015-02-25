@@ -39,6 +39,9 @@ struct r128_ctx
 #define R128_FL_NOBLUR 128
 #define R128_FL_ALIGNMENT_SHORT 256
 #define R128_FL_ALIGNMENT_LONG 512
+#define R128_FL_BLUR_X 1024
+#define R128_FL_BLUR_SHORT 2048
+#define R128_FL_BLUR_LONG 4096
 
   char *temp_prefix;
 

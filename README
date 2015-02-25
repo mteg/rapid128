@@ -57,8 +57,9 @@ Because this program was created for solving a particular task in a very
 particular system (see section 6), it is not yet a finished product and stil
 needs a lot of testing in various different scenarios. 
 
-Vertical blurring works only in the vertical direction. Which means it does
-not improve recognition of vertically placed codes at all.
+Blurring works only in one direction, either horizontal or vertical. Even
+though it can be selected automatically depending on image aspect ratio, it
+is still a problem when orientations of codes in the dataset are not known.
 
 
 5. AUTHOR AND LICENSE

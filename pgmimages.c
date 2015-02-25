@@ -165,6 +165,7 @@ struct r128_image * r128_blur_image(struct r128_ctx * ctx, int n)
   u_int8_t *result;
   char *tempnam;
   int fd = -1;
+  int blur_x;
   
   if(i->root) return i;
 
@@ -187,14 +188,37 @@ struct r128_image * r128_blur_image(struct r128_ctx * ctx, int n)
   assert((accu = (int*) malloc(sizeof(int) * src->width)));
   memset(accu, 0, sizeof(int) * src->width);
   
+  if(ctx->flags & R128_FL_BLUR_SHORT)
+    blur_x = (src->width < src->height) ? 1 : 0;
+  else if(ctx->flags & R128_FL_BLUR_LONG)
+    blur_x = (src->width > src->height) ? 1 : 0;
+  else 
+    blur_x = (ctx->flags & R128_FL_BLUR_X) ? 1 : 0;
+  
   for(y = 0; y<src->height; y++)
   {
-    for(x = 0; x<src->width; x++)
+    if(blur_x)
     {
-      if(y >= bh) accu[x] -= minus_line[x];
-      accu[x] += plus_line[x];
-      result[pix++] = accu[x] / bh;          
+      /* Blur along X axis */
+      int accu_x = 0;
+      for(x = 0; x<src->width; x++)
+      {
+        if(x >= bh) accu_x -= plus_line[x - bh];
+        accu_x += plus_line[x];
+        result[pix++] = accu_x / bh;          
+      }      
     }
+    else
+    {
+      /* Blur along Y axis */
+      for(x = 0; x<src->width; x++)
+      {
+        if(y >= bh) accu[x] -= minus_line[x];
+        accu[x] += plus_line[x];
+        result[pix++] = accu[x] / bh;          
+      }
+    }
+
 
     if(ctx->flags & R128_FL_MMAPALL)
     {

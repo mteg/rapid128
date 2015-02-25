@@ -88,9 +88,11 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
   printf(" -ch <pix>  Expected minimal code height [%d]\n", ctx->expected_min_height);
   printf(" -nb        Do not use blurring at all\n");
   printf(" -bh <pix>  Blurring height [%d]\n", ctx->blurring_height);
+  printf(" -bx / -by  Blur in X or Y axis (default: Y)\n");
+  printf(" -bS / -bL  Blur along shorter or longer edge (only one of -bx, -by, -bS or -bL makes sense)\n");
   printf(" -s  <strg> Configure scanning strategy\n"); 
-  printf(" -u1 <stpc> Unit width search step count (pass 1 - uppercase H) [%d]\n", ctx->uw_steps1);
-  printf(" -u2 <stpc> Unit width search step count (pass 2 - lowercase h) [%d]\n", ctx->uw_steps2);
+  printf(" -u1 <stpc> Unit width search step count (pass 1 - uppercase W) [%d]\n", ctx->uw_steps1);
+  printf(" -u2 <stpc> Unit width search step count (pass 2 - lowercase w) [%d]\n", ctx->uw_steps2);
   if(vb == 2)
   {
     printf("Expected minimal height affects speed, but not detection. In first pass, rapid128 only"
@@ -247,11 +249,14 @@ int main(int argc, char ** argv)
     {
       case 'a': ctx.flags |= R128_FL_READALL; break;
       case 'b':
-        switch((c = getopt(argc, argv, "h:s:t:")))
+        switch((c = getopt(argc, argv, "h:s:t:xySL")))
         {
           case 'h': ctx.blurring_height = intopt(&ctx, "-bh", optarg); break;
           case 's': ctx.batch_size = intopt(&ctx, "-bs", optarg); break;
           case 't': ctx.batch_limit = floatopt(&ctx, "-bt", optarg); break;
+          case 'x': ctx.flags |= R128_FL_BLUR_X; break;
+          case 'S': ctx.flags |= R128_FL_BLUR_SHORT; break;
+          case 'L': ctx.flags |= R128_FL_BLUR_LONG; break;
           default:  r128_fail(&ctx, "Unknown option: -b%c\n", c); break;
         }
         break;
