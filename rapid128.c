@@ -110,7 +110,8 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
   printf("IMAGE INTERPRETATION\n");
   printf(" -t <float> Threshold [%.2f].\n", ctx->def_threshold);
   printf(" -r         Codes are not horizontal and oriented left to right, but rather rotated by 90 degress clockwise (use twice/three times to indicate 180/270)\n");
-  printf(" -I         Assume scans are A4 portrait pages and codes are horizontal; skip rotations not matching this scheme (eg. 0 deg when width > height).\n");
+  printf(" -ps        Assume codes are in parallel to shorter edges of images (ie. horizontal on portrait pages or vertical on landscape pages). Do not process images in tactics using rotations not matching this scheme (eg. skip processing 0 deg rotations for an image when its width > height).\n");
+  printf(" -pl        Same, but assume codes are parallel to longer edges\n");
   printf(" -ic R/G/B  Use only the indicated channel of RGB images\n");
   if(vb == 2)
   {
@@ -240,7 +241,7 @@ int main(int argc, char ** argv)
   r128_defaults(&ctx);
   clock_gettime(CLOCK_MONOTONIC, &ctx.startup);
   
-  while((c = getopt(argc, argv, "abcehiIlmnqrvs:t:uwV")) != EOF)
+  while((c = getopt(argc, argv, "abcehilmnpqrvs:t:uwV")) != EOF)
   {
     switch(c)
     {
@@ -285,9 +286,6 @@ int main(int argc, char ** argv)
           default:  r128_fail(&ctx, "Unknown option: -i%c\n", c); break;
         }
         break;
-      case 'I':
-        ctx.autoskip_rotations = 1;
-        break;  
       case 'l':
         switch((c = getopt(argc, argv, "c:t:")))
         {
@@ -315,6 +313,14 @@ int main(int argc, char ** argv)
           case 'b': ctx.flags |= R128_FL_NOBLUR; break;
         }
         break;
+      case 'p':
+        switch((c = getopt(argc, argv, "sl")))
+        {
+          case 's': ctx.flags |= R128_FL_ALIGNMENT_SHORT; break;
+          case 'l': ctx.flags |= R128_FL_ALIGNMENT_LONG; break;
+        }
+        break;
+      
       case 'q': ctx.logging_level--; break;
       case 'r':
         ctx.def_rotation++;

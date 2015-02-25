@@ -182,16 +182,17 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
           if(!img->gray_data) continue;
         }
       
-        if(ctx->autoskip_rotations)
+        if(ctx->flags & (R128_FL_ALIGNMENT_SHORT | R128_FL_ALIGNMENT_LONG))
         {
-          if(ctx->rotation & 1)
+          if(((ctx->rotation & 1) && (ctx->flags & R128_FL_ALIGNMENT_SHORT)) ||
+             ((!(ctx->rotation & 1)) && (ctx->flags & R128_FL_ALIGNMENT_LONG)))
           {
-            if(img->height > img->width) /* Rather rotated */
+            if(img->height > img->width) /* Incorrectly rotated */
               continue;
           }
           else
           {
-            if(img->width > img->height) /* Rather rotated */
+            if(img->width > img->height) /* Incorrectly rotated */
               continue;
           }
         }

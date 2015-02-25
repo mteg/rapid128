@@ -37,6 +37,8 @@ struct r128_ctx
 #define R128_FL_NOCROP 32
 #define R128_FL_KEEPTEMPS 64
 #define R128_FL_NOBLUR 128
+#define R128_FL_ALIGNMENT_SHORT 256
+#define R128_FL_ALIGNMENT_LONG 512
 
   char *temp_prefix;
 
@@ -93,7 +95,7 @@ struct r128_ctx
                             double uwidth, double threshold,
                             u_int32_t pattern, u_int32_t mask, int read_limit, double *curpos);
   
-  u_int8_t rotation, def_rotation, rgb_channel, autoskip_rotations;
+  u_int8_t rotation, def_rotation, rgb_channel;
 };
 
 
