@@ -21,6 +21,12 @@ unsigned char * skip_to_newline_a(unsigned char *ptr, int *len, char *copy_to, i
 {
   while((*len) > 0)
   {
+    if(!isspace(*ptr)) break;
+    ptr++; (*len)--;
+  }
+
+  while((*len) > 0)
+  {
     if(isspace(*ptr)) break;
     if(copy_len > 0)
     {
@@ -32,11 +38,6 @@ unsigned char * skip_to_newline_a(unsigned char *ptr, int *len, char *copy_to, i
   
   if(copy_len) *copy_to = 0;
   
-  while((*len) > 0)
-  {
-    if(!isspace(*ptr)) break;
-    ptr++; (*len)--;
-  }
   
   return ptr;
 }
@@ -118,6 +119,7 @@ P1 (3 bytes)
 
     b = skip_comments(b, &len);
     b = skip_to_newline_a(b, &len, line, PGM_MAX_LINE - 1);
+    
 
     if(!len) 
       return r128_log_return(c, R128_ERROR, rc, "Cannot parse PGM file %s: invalid header.\n", filename);

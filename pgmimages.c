@@ -25,6 +25,7 @@ struct r128_line *r128_get_line(struct r128_ctx *ctx, struct r128_image *im, int
   struct r128_line *linetab = im->lines;
   
   if(rotation & 1) linetab += im->height;  
+  
   if(linetab[line].offset != 0xffffffff) return &linetab[line];
   
   data = im->gray_data;
@@ -67,9 +68,11 @@ struct r128_line *r128_get_line(struct r128_ctx *ctx, struct r128_image *im, int
     {
       prev_so_far = R128_MARGIN_CLASS(ctx, data[start + (len - min_len + max_gap) * pixmult]);
 
-      for(gap = 1; prev_so_far && (start + len - gap - min_len + max_gap) >= 0; prev_so_far = so_far, gap++)
+      for(gap = 1; prev_so_far && start + (len - gap - min_len + max_gap) * pixmult >= 0; prev_so_far = so_far, gap++)
+      {
         if((so_far = R128_MARGIN_CLASS(ctx, data[start + (len - gap - min_len + max_gap) * pixmult])) != prev_so_far)
           break;
+      }
       
       /* Indeed a gap! */
       if(gap > max_gap)
