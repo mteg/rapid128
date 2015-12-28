@@ -109,21 +109,21 @@ void r128_update_best_code(struct r128_ctx *ctx, struct r128_image *im, u_int8_t
 }
 
 
-int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_line *li, double ppos, double uwidth, double threshold)
+int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_line *li, ufloat8 ppos, ufloat8 uwidth, ufloat8 threshold)
 {
   int rc = R128_EC_NOEND;
-  static double weights[] = {1.0, 1.05, 0.95, 1.02, 0.98};
-  double new_ppos;
+  static ufloat8 weights[] = {256, 269, 243, 261, 251};
+  ufloat8 new_ppos;
   int w = li->linesize;
   
-  while(lrint(ceil(ppos)) < w) 
+  while(UF8_INTCEIL(ppos) < w) 
   {
     int cs, i;
     u_int32_t code;
     
     for(i = 0; i<5; i++) 
     {
-      code = ctx->read_bits(ctx, img, li, ppos - uwidth, uwidth * weights[i], threshold * weights[i], 0, 0, 13, &new_ppos);
+      code = ctx->read_bits(ctx, img, li, ppos - uwidth, UF8_MUL(uwidth, weights[i]), UF8_MUL(threshold, weights[i]), 0, 0, 13, &new_ppos);
       cs = code_symbols[(code >> 2) & 0x1ff];
     
       if(!((code & 2) || (!(code & 1)) || (!(code & 0x800)) || (code & 0x1000) || cs == -1))
@@ -157,7 +157,7 @@ int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_lin
   return rc;
 }
   
-int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, double uwidth, double offset, double threshold)
+int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 uwidth, ufloat8 offset, ufloat8 threshold)
 {
   
 /*
@@ -165,20 +165,21 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
   00 1101 0010 0001 = 0x0d21
   00 1101 0011 1001 = 0x0d39  
   00 1101 00XX X001 = 0x0d01 = pattern
-                      0x3fc1 = mask
+                      0x3fc1 = mask (bug? 3fc7 ??)
  */ 
   int rc = R128_EC_NOCODE;
-  double ppos = offset * uwidth, w = li->linesize;
+  ufloat8 ppos = UF8_MUL(offset, uwidth), w = li->linesize;
   
   if(!w) return R128_EC_NOLINE;
     
-  threshold *= 255.0 * uwidth;
+  threshold = UF8_MUL(threshold, uwidth);
+//   *= 255.0 * uwidth;
 
   while(1)
   {
-    u_int32_t start_symbol = ctx->read_bits(ctx, im, li, ppos, uwidth, threshold, 
-                      0x0d01, 0x3fc1, 65536, &ppos);
-    if(lrint(ceil(ppos + 3.0 * 11.0 * uwidth)) >= w) break; /* Nothing interesting found - start comes too late for a meaningful code! */
+    u_int32_t start_symbol = ctx->read_bits(ctx, im, li, ppos, uwidth, threshold,
+                      0x0d01, 0x3fc7, 65536, &ppos);
+    if(UF8_INTCEIL(ppos + 3 * 11 * uwidth) >= w) break; /* Nothing interesting found - start comes too late for a meaningful code! */
     
     start_symbol &= 0x3fff;
 
@@ -195,7 +196,7 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
     }
     
     /* Go back half a symbol and try again */
-    ppos -= uwidth * 6.0; 
+    ppos -= uwidth * 6; 
   }
   
   return rc;

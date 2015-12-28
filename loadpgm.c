@@ -266,7 +266,7 @@ int r128_load_pgm(struct r128_ctx *c, struct r128_image *im, char *filename)
 
 int r128_load_file(struct r128_ctx *c, struct r128_image *im)
 {
-  double t_start;
+  unsigned int t_start;
   int childpid, maxfd;
   int sp_stdout[2];
   int sp_stderr[2];

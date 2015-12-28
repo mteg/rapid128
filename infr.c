@@ -14,12 +14,12 @@
 
 int r128_log_return(struct r128_ctx *ctx, int level, int rc, char *fmt, ...)
 {
-  double t;
+  unsigned int t, lrd;
   va_list ap;
   if(level > ctx->logging_level) return rc;
   
-  t = r128_time(ctx);
-  fprintf(stderr, "[%.2f] (+%.3f) ", t, t - ctx->last_report);
+  t = r128_time(ctx); lrd = t - ctx->last_report;
+  fprintf(stderr, "[%2d.%03d] (+%d.%03d) ", t / 1000, t % 1000, lrd / 1000, lrd % 1000);
   ctx->last_report = t;
   
   va_start(ap, fmt);  
@@ -41,16 +41,15 @@ void r128_fail(struct r128_ctx *ctx, char *fmt, ...)
   exit(1);
 }
 
-double r128_time(struct r128_ctx *ctx)
+unsigned int r128_time(struct r128_ctx *ctx)
 {
   struct timespec ts;
-  double res;
+  int res;
 
   clock_gettime(CLOCK_MONOTONIC, &ts);
   res  = ts.tv_nsec - ctx->startup.tv_nsec;
-  res /= 1000000000.0;
-  res += ts.tv_sec - ctx->startup.tv_sec;
-  
+  res /= 1000000;
+  res += (ts.tv_sec - ctx->startup.tv_sec) * 1000;
   return res;
 }
 
@@ -86,8 +85,8 @@ int r128_report_code(struct r128_ctx *ctx, struct r128_image *img, char *code, i
   if(ctx->flags & R128_FL_EREPORT)
   {
     int i;
-    printf("%s:%.3f:%s:%s", img->root ? img->root->filename : img->filename,
-      img->time_spent, code ? ctx->tactics : "", r128_strerror(img->best_rc));
+    printf("%s:%d.%03d:%s:%s", img->root ? img->root->filename : img->filename,
+      img->time_spent / 1000, img->time_spent % 1000, code ? ctx->tactics : "", r128_strerror(img->best_rc));
     for(i = 0; i<img->bestcode_len; i++)
       printf("%c%d", i ? ' ' : ':', img->bestcode[i]);
     printf(":");

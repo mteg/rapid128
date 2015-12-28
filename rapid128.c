@@ -13,15 +13,17 @@
 #include <ctype.h>
 #include "rapid128.h"
 
-inline static double floatopt(struct r128_ctx *ctx, char *opt, char *val)
+inline static ufloat8 ufloat8opt(struct r128_ctx *ctx, char *opt, char *val)
 {
   double res;
   char *eptr;
   res = strtod(val, &eptr);
   if(*eptr)
     r128_fail(ctx, "Invalid value for %s: %s\n", opt, val);
-  return res;
+  
+  return lrint(res * 256.0);
 }
+
 
 inline static int intopt(struct r128_ctx *ctx, char *opt, char *val)
 {
@@ -37,9 +39,9 @@ void r128_defaults(struct r128_ctx *c)
 {
   memset(c, 0, sizeof(struct r128_ctx));
   c->strategy = "IHWO@0.6,iHWO,IHWo,iHWo,IHwO,iHwO,IHwo,iHwo,IhWO,ihWO,IhWo,ihWo,IhwO,ihwO,Ihwo,ihwo";
-  c->min_uwidth = 0.9;
-  c->max_uwidth = 4;
-  c->def_threshold = 0.6;
+  c->min_uwidth = 230;	/* 0.9 */
+  c->max_uwidth = 4 * 256;
+  c->def_threshold = 154;	/* 0.6 */
   c->margin_low_threshold = 20;
   c->margin_high_threshold = 235;
 /*
@@ -68,8 +70,8 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
   printf(" -V         Print version and quit\n");
   printf("\n");
   printf("BASIC SCANNER PARAMETERS\n");
-  printf(" -wa <pix>  Minimum expected width of thinnest bar in pixels [%.1f]\n", ctx->min_uwidth);
-  printf(" -wb <pix>  Maximum expected width of thinnest bar in pixels [%.1f]\n", ctx->max_uwidth);
+  printf(" -wa <pix>  Minimum expected width of thinnest bar in pixels [%.1f]\n", UF8_FLOAT(ctx->min_uwidth));
+  printf(" -wb <pix>  Maximum expected width of thinnest bar in pixels [%.1f]\n", UF8_FLOAT(ctx->max_uwidth));
   printf(" -mh <lvl>  High (white) threshold for cutting margins [%d]\n", ctx->margin_high_threshold);
   printf(" -ml <lvl>  Low (black) threshold for cutting margins [%d]\n", ctx->margin_low_threshold);
   if(vb == 2)
@@ -110,7 +112,7 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
 
   printf("\n");
   printf("IMAGE INTERPRETATION\n");
-  printf(" -t <float> Threshold [%.2f].\n", ctx->def_threshold);
+  printf(" -t <float> Threshold [%.2f].\n", UF8_FLOAT(ctx->def_threshold));
   printf(" -r         Codes are not horizontal and oriented left to right, but rather rotated by 90 degress clockwise (use twice/three times to indicate 180/270)\n");
   printf(" -ps        Assume codes are in parallel to shorter edges of images (ie. horizontal on portrait pages or vertical on landscape pages). Do not process images in tactics using rotations not matching this scheme (eg. skip processing 0 deg rotations for an image when its width > height).\n");
   printf(" -pl        Same, but assume codes are parallel to longer edges\n");
@@ -139,7 +141,7 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
   printf("\n");
   printf("BATCH PROCESSING\n");
   printf(" -bs <cnt>  Batch size - number of files processed at once [%d]\n", ctx->batch_size);
-  printf(" -bt <secs> Time limit for each batch [%.1f]\n", ctx->batch_limit);
+  printf(" -bt <secs> Time limit for each batch in ms [%d]\n", ctx->batch_limit);
   if(vb == 2)
   {
     printf("Without -bs, files are processed one by one. However, if a batch size is given with -bs, rapid128 "
@@ -151,7 +153,7 @@ int help(struct r128_ctx *ctx, char *progname, int vb)
   printf("\n");
   printf("FILE INPUT\n");
   printf(" -lc <cmd>  Set loader command [%s]\n", ctx->loader ? ctx->loader : "");
-  printf(" -lt <secs> Time limit for the loader command [%.1f]\n", ctx->loader_limit);
+  printf(" -lt <secs> Time limit for the loader command in ms [%d]\n", ctx->loader_limit);
   if(vb == 2)
   {
     printf("Normally, rapid128 processes only PGM files. To load other file formats, a loader command"
@@ -253,7 +255,7 @@ int main(int argc, char ** argv)
         {
           case 'h': ctx.blurring_height = intopt(&ctx, "-bh", optarg); break;
           case 's': ctx.batch_size = intopt(&ctx, "-bs", optarg); break;
-          case 't': ctx.batch_limit = floatopt(&ctx, "-bt", optarg); break;
+          case 't': ctx.batch_limit = intopt(&ctx, "-bt", optarg); break;
           case 'x': ctx.flags |= R128_FL_BLUR_X; break;
           case 'S': ctx.flags |= R128_FL_BLUR_SHORT; break;
           case 'L': ctx.flags |= R128_FL_BLUR_LONG; break;
@@ -295,7 +297,7 @@ int main(int argc, char ** argv)
         switch((c = getopt(argc, argv, "c:t:")))
         {
           case 'c': assert((ctx.loader = strdup(optarg))); break;
-          case 't': ctx.loader_limit = floatopt(&ctx, "-lt", optarg); break;
+          case 't': ctx.loader_limit = intopt(&ctx, "-lt", optarg); break;
           default:  r128_fail(&ctx, "Unknown option: -l%c\n", c); break;
         }
         break;
@@ -305,8 +307,8 @@ int main(int argc, char ** argv)
           case 'm': ctx.flags |= R128_FL_MMAPALL; break;
           case 'a': ctx.flags |= R128_FL_RAMALL; break;
           case 'p': assert((ctx.temp_prefix = strdup(optarg))); break;
-          case 'l': ctx.margin_low_threshold = floatopt(&ctx, "-ml", optarg); break;
-          case 'h': ctx.margin_high_threshold = floatopt(&ctx, "-mh", optarg); break;
+          case 'l': ctx.margin_low_threshold = intopt(&ctx, "-ml", optarg); break;
+          case 'h': ctx.margin_high_threshold = intopt(&ctx, "-mh", optarg); break;
           default:  r128_fail(&ctx, "Unknown option: -m%c\n", c); break;
         }
         break;
@@ -333,7 +335,7 @@ int main(int argc, char ** argv)
         break;
       case 's': assert((ctx.strategy = strdup(optarg))); break;
       case 't':
-        ctx.def_threshold = floatopt(&ctx, "-t", optarg);
+        ctx.def_threshold = ufloat8opt(&ctx, "-t", optarg);
         break;
       case 'u':
         switch((c = getopt(argc, argv, "1:2:")))
@@ -348,8 +350,8 @@ int main(int argc, char ** argv)
       case 'w':
         switch((c = getopt(argc, argv, "a:b:")))
         {
-          case 'a': ctx.min_uwidth = floatopt(&ctx, "-wa", optarg); break;
-          case 'b': ctx.max_uwidth = floatopt(&ctx, "-wb", optarg); break;
+          case 'a': ctx.min_uwidth = ufloat8opt(&ctx, "-wa", optarg); break;
+          case 'b': ctx.max_uwidth = ufloat8opt(&ctx, "-wb", optarg); break;
           default:  r128_fail(&ctx, "Unknown option: -w%c\n", c); break;
         }
         break;

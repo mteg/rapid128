@@ -1,3 +1,5 @@
+#include "ufloat8.h"
+
 struct r128_line
 {
   u_int32_t offset;
@@ -14,7 +16,7 @@ struct r128_image
 #define R128_EXP_CODE_MAX 64
   u_int16_t bestcode_len, bestcode_alloc, mmaped;
   
-  double time_spent;
+  unsigned int time_spent; /* in ms */
 
 #define R128_READ_STEP 262144
   char *file;
@@ -60,13 +62,13 @@ struct r128_ctx
   int codepos, codealloc;
   
   /* min/max code unit width to assume */
-  double min_uwidth, max_uwidth;
+  ufloat8 min_uwidth, max_uwidth;
   
   /* search space for unit width */
-  double *uwidth_space;
+  ufloat8 *uwidth_space;
   u_int8_t *uw_space_visited;
 
-  double threshold, def_threshold;
+  ufloat8 threshold, def_threshold;
   int margin_low_threshold, margin_high_threshold;
   
   int min_len, max_gap;
@@ -85,18 +87,18 @@ struct r128_ctx
   int *line_scan_status;
   int line_scan_alloc;
   
-  double batch_limit;
+  unsigned int batch_limit; /* in ms */
   int batch_size;
-  double batch_start;
+  unsigned int batch_start; /* in ms */
   
   char *loader;
-  double loader_limit;
+  unsigned int loader_limit; /* in ms */
   
-  double last_report;
+  unsigned int last_report; /* in ms */
   
-  u_int32_t (*read_bits)(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, double ppos, 
-                            double uwidth, double threshold,
-                            u_int32_t pattern, u_int32_t mask, int read_limit, double *curpos);
+  u_int32_t (*read_bits)(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 ppos, 
+                            ufloat8 uwidth, ufloat8 threshold,
+                            u_int32_t pattern, u_int32_t mask, int read_limit, ufloat8 *curpos);
   
   u_int8_t rotation, def_rotation, rgb_channel;
 };
@@ -158,7 +160,7 @@ static inline int bfsguidance(int ctr)
 
 int r128_log_return(struct r128_ctx *ctx, int level, int rc, char *fmt, ...);
 void r128_fail(struct r128_ctx *ctx, char *fmt, ...);
-double r128_time(struct r128_ctx *ctx);
+unsigned int r128_time(struct r128_ctx *ctx);
 void *r128_malloc(struct r128_ctx *ctx, int size);
 void r128_free(void *p);
 void *r128_realloc(struct r128_ctx *ctx, void *ptr, int size);
@@ -170,7 +172,7 @@ int r128_cksum(u_int8_t *symbols, int len);
 int r128_parse(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *symbols, int len);
 void r128_update_best_code(struct r128_ctx *ctx, struct r128_image *im, u_int8_t *symbols, int len);
 
-int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, double uwidth, double offset, double threshold);
+int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 uwidth, ufloat8 offset, ufloat8 threshold);
 void r128_configure_rotation(struct r128_ctx *ctx);
 
 int r128_parse_pgm(struct r128_ctx *c, struct r128_image *im, char *filename);
@@ -178,7 +180,7 @@ int r128_load_pgm(struct r128_ctx *c, struct r128_image *im, char *filename);
 int r128_load_file(struct r128_ctx *c, struct r128_image *im);
 
 void r128_realloc_buffers(struct r128_ctx *c);
-int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img, double offset, double uwidth, int minheight, int maxheight);
+int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img, ufloat8 offset, ufloat8 uwidth, int minheight, int maxheight);
 int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, int codes_to_find);
 int r128_run_strategy(struct r128_ctx *ctx, char *strategy, int start, int len);
 void r128_compute_uwidth_space(struct r128_ctx *ctx);

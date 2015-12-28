@@ -35,10 +35,10 @@ void r128_realloc_buffers(struct r128_ctx *c)
 }
 
 int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
-          double offset, double uwidth, int minheight, int maxheight)
+          ufloat8 offset, ufloat8 uwidth, int minheight, int maxheight)
 {
   int min_ctr, max_ctr, ctr, lines_scanned = 0, rc = R128_EC_NOCODE;
-  double t_start = r128_time(ctx), t_spent;
+  unsigned int t_start = r128_time(ctx), t_spent;
   int linemax;
   
   if(ctx->rotation & 1)
@@ -60,7 +60,8 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
   
   ctx->page_scan_id++;
   r128_log(ctx, R128_DEBUG1, "Page scan # %d of %simage %s starts: offs = %.3f, th = %.2f, heights = %d ~ %d, uwidth = %.2f\n", 
-        ctx->page_scan_id, img->root ? "blurred " : "", img->root ? img->root->filename : img->filename, offset, ctx->threshold, minheight, maxheight, uwidth);
+        ctx->page_scan_id, img->root ? "blurred " : "", img->root ? img->root->filename : img->filename,
+        UF8_FLOAT(offset), UF8_FLOAT(ctx->threshold), minheight, maxheight, UF8_FLOAT(uwidth));
   
   /* Do a BFS scan of page lines @ particular offset and unit width */
   for(ctr = min_ctr; ctr < max_ctr; ctr++)
@@ -84,7 +85,7 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
     if(R128_ISDONE(ctx, rc))
     {
       r128_log(ctx, R128_NOTICE, "Code was found in page scan # %d, offs = %.3f, th = %.2f, heights = %d ~ %d, uwidth = %.2f, line = %d\n", 
-            ctx->page_scan_id, offset, ctx->threshold, minheight, maxheight, uwidth, line_idx);
+            ctx->page_scan_id, UF8_FLOAT(offset), UF8_FLOAT(ctx->threshold), minheight, maxheight, UF8_FLOAT(uwidth), line_idx);
       img->best_rc = rc;
       img->time_spent += (t_spent = r128_time(ctx) - t_start);
       if(img->root)
@@ -111,7 +112,8 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
 
 int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, int codes_to_find)
 {
-  static double offsets[] = {0, 0.5, 0.25, 0.75, 0.125, 0.375, 0.625, 0.875};
+  static ufloat8 offsets[] = {0, 128, 64, 192, 32, 96, 160, 224};
+/*  static double offsets[] = {0, 0.5, 0.25, 0.75, 0.125, 0.375, 0.625, 0.875}; */
   int offs, offs_min = 0, offs_max = 4;
   int h_min = ctx->expected_min_height, h_max;
   char *param_input;
@@ -125,8 +127,13 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
   ctx->tactics = tactics;
 
   if((param_input = strstr(tactics, "@")))
-    if(sscanf(param_input + 1, "%lf", &ctx->threshold) != 1)
-      r128_log(ctx, R128_NOTICE, "Invalid threshold in tactics: '%s', keeping to old threshold, equal %.2f.\n", tactics, ctx->threshold);
+  {
+    double th;
+    if(sscanf(param_input + 1, "%lf", &th) != 1)
+      r128_log(ctx, R128_NOTICE, "Invalid threshold in tactics: '%s', keeping to old threshold, equal %.2f.\n", tactics, UF8_FLOAT(ctx->threshold));
+    else
+      ctx->threshold = lrint(th * 256.0); 
+  }
 
   if((param_input = strstr(tactics, "/")))
   {
@@ -172,9 +179,9 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
         /* Get image */
         struct r128_image *img = &ctx->im[start + i];
 
-        if(ctx->batch_limit != 0.0)
+        if(ctx->batch_limit != 0)
         {
-          double t = r128_time(ctx);
+          unsigned int t = r128_time(ctx);
           if((t - ctx->batch_start) > ctx->batch_limit)
           {
             r128_log(ctx, R128_NOTICE, "Finishing tactics '%s'. Time exceeded, %d of %d codes found\n", tactics, codes_found, codes_to_find);
@@ -256,8 +263,8 @@ int r128_run_strategy(struct r128_ctx *ctx, char *strategy, int start, int len)
   ctx->threshold = ctx->def_threshold;
   ctx->rotation = ctx->def_rotation;
   
-  ctx->min_len = lrint(floor(4.0 * 13.0 * ctx->min_uwidth));
-  ctx->max_gap = lrint(ceil(6.0 * ctx->max_uwidth));
+  ctx->min_len = UF8_INTFLOOR(4 * 13 * ctx->min_uwidth);
+  ctx->max_gap = UF8_INTCEIL(6 * ctx->max_uwidth);
   
   /* Precompute data for unit width search */
   
@@ -290,20 +297,22 @@ int r128_run_strategy(struct r128_ctx *ctx, char *strategy, int start, int len)
 
 void r128_compute_uwidth_space(struct r128_ctx *ctx)
 {
-  double uw = ctx->min_uwidth;	
+  ufloat8 uw = ctx->min_uwidth;	
   int i = 0, uws_alloc = 128;
   if(ctx->uw_steps2) uws_alloc = ctx->uw_steps2;
-  ctx->uwidth_space = (double*) r128_malloc(ctx, sizeof(double) * uws_alloc);
+  ctx->uwidth_space = (ufloat8*) r128_malloc(ctx, sizeof(ufloat8) * uws_alloc);
 
   if(!ctx->uw_steps2)
   {
     /* Defaults: small step is 1 + 1/13 * 0.25, big step is 1 + 1/13 * 1.0 */
+//    ufloat8 mul = 256 + 5;  /* = 1.0 + 1.0/13.0 * 0.25 */
     
-    for(i = 0; uw <= ctx->max_uwidth; uw *= 1.0 + 1.0/13.0 * 0.25)
+    for(i = 0; uw <= ctx->max_uwidth; uw += UF8_MUL(uw, 5))
     {
       ctx->uwidth_space[i++] = uw;
       if(i == uws_alloc)
-        ctx->uwidth_space = (double*) r128_realloc(ctx, ctx->uwidth_space, sizeof(double) * (uws_alloc = uws_alloc * 2));
+        ctx->uwidth_space = (ufloat8*) r128_realloc(ctx, ctx->uwidth_space, sizeof(ufloat8) * (uws_alloc = uws_alloc * 2));
+      if(UF8_MUL(uw, 5) == 0) uw++;
     }
     
     ctx->uw_steps2 = i;
@@ -313,9 +322,11 @@ void r128_compute_uwidth_space(struct r128_ctx *ctx)
   }
   else
   {
-    double delta = pow(ctx->max_uwidth / ctx->min_uwidth, 1.0 / ((double) ctx->uw_steps2));
+#warning still needs to be repaired
+    assert(0);
+/*    double delta = pow(ctx->max_uwidth / ctx->min_uwidth, 1.0 / ((double) ctx->uw_steps2));
     for(i = 0; i<uws_alloc; i++, uw *= delta)
-      ctx->uwidth_space[i] = uw;
+      ctx->uwidth_space[i] = uw;*/
   }
   if(!ctx->uw_steps1) ctx->uw_steps1 = ctx->uw_steps2;
   
