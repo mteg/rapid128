@@ -1,5 +1,7 @@
 #include "ufloat8.h"
 
+#define R128_MAX_MSG 512
+
 struct r128_line
 {
   u_int32_t offset;
@@ -30,7 +32,7 @@ struct r128_ctx
 {
   char *strategy;
   char *tactics;
-  int flags;
+  int flags, nh;
 #define R128_FL_READALL 1
 #define R128_FL_NOCKSUM 2
 #define R128_FL_EREPORT 4
@@ -97,10 +99,17 @@ struct r128_ctx
   unsigned int last_report; /* in ms */
   
   u_int32_t (*read_bits)(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 ppos, 
-                            ufloat8 uwidth, ufloat8 threshold,
-                            u_int32_t pattern, u_int32_t mask, int read_limit, ufloat8 *curpos);
+                            ufloat8 uwidth, ufloat8 threshold, int read_limit, ufloat8 *curpos);
+  u_int32_t (*find_bits)(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 ppos, 
+                            ufloat8 uwidth, ufloat8 *threshold, ufloat8 *curpos);
   
   u_int8_t rotation, def_rotation, rgb_channel;
+  
+  void (*say)(void *, char *);
+  void *say_arg;
+
+  int (*report_code)(struct r128_ctx *, struct r128_image *, void *, char *, int, ufloat8, ufloat8);
+  void *report_code_arg;
 };
 
 
@@ -165,11 +174,11 @@ void *r128_malloc(struct r128_ctx *ctx, int size);
 void r128_free(void *p);
 void *r128_realloc(struct r128_ctx *ctx, void *ptr, int size);
 void *r128_zalloc(struct r128_ctx *ctx, int size);
-int r128_report_code(struct r128_ctx *ctx, struct r128_image *img, char *code, int len);
+int r128_report_code(struct r128_ctx *ctx, struct r128_image *img, void *own_data, char *code, int len, ufloat8 startsat, ufloat8 codewidth);
 const char * r128_strerror(int rc);
 int r128_cksum(u_int8_t *symbols, int len);
 
-int r128_parse(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *symbols, int len);
+int r128_parse(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *symbols, int len, ufloat8 startsat, ufloat8 codewidth);
 void r128_update_best_code(struct r128_ctx *ctx, struct r128_image *im, u_int8_t *symbols, int len);
 
 int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 uwidth, ufloat8 offset, ufloat8 threshold);
@@ -193,4 +202,7 @@ struct r128_image * r128_blur_image(struct r128_ctx * ctx, int n);
 void r128_free_image(struct r128_ctx *c, struct r128_image *im);
 char * r128_tempnam(struct r128_ctx *c);
 void r128_defaults(struct r128_ctx *c);
+
+int r128_help(struct r128_ctx *ctx, const char *progname, int vb);
+int r128_getopt(struct r128_ctx *c, int argc,  char ** argv);
 

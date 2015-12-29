@@ -14,18 +14,21 @@
 
 int r128_log_return(struct r128_ctx *ctx, int level, int rc, char *fmt, ...)
 {
-  unsigned int t, lrd;
+  unsigned int t, lrd, pos;
   va_list ap;
+  char msg_buffer[R128_MAX_MSG + 1];
+  
   if(level > ctx->logging_level) return rc;
   
   t = r128_time(ctx); lrd = t - ctx->last_report;
-  fprintf(stderr, "[%2d.%03d] (+%d.%03d) ", t / 1000, t % 1000, lrd / 1000, lrd % 1000);
+  pos = snprintf(msg_buffer, R128_MAX_MSG, "[%2d.%03d] (+%d.%03d) ", t / 1000, t % 1000, lrd / 1000, lrd % 1000);
   ctx->last_report = t;
   
   va_start(ap, fmt);  
-  vfprintf(stderr, fmt, ap);
+  vsnprintf(msg_buffer + pos, R128_MAX_MSG - pos, fmt, ap);
   va_end(ap);
   
+  ctx->say(ctx->say_arg, msg_buffer);  
   return rc;
 }
 
@@ -79,14 +82,15 @@ void *r128_zalloc(struct r128_ctx *ctx, int size)
   return ret;
 }
 
-int r128_report_code(struct r128_ctx *ctx, struct r128_image *img, char *code, int len)
+int r128_report_code(struct r128_ctx *ctx, struct r128_image *img, void *own_data, char *code, int len, ufloat8 startsat, ufloat8 codewidth)
 {
   if(code) img->best_rc = R128_EC_SUCCESS;
   if(ctx->flags & R128_FL_EREPORT)
   {
     int i;
-    printf("%s:%d.%03d:%s:%s", img->root ? img->root->filename : img->filename,
-      img->time_spent / 1000, img->time_spent % 1000, code ? ctx->tactics : "", r128_strerror(img->best_rc));
+    printf("%s:%d.%03d:%s:%s:%.1f:%.1f", img->root ? img->root->filename : img->filename,
+      img->time_spent / 1000, img->time_spent % 1000, code ? ctx->tactics : "", r128_strerror(img->best_rc),
+      UF8_FLOAT(startsat), UF8_FLOAT(codewidth));
     for(i = 0; i<img->bestcode_len; i++)
       printf("%c%d", i ? ' ' : ':', img->bestcode[i]);
     printf(":");

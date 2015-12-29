@@ -165,7 +165,7 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
     {
       int i;
       int uw_idx = (ctx->uw_steps2 * bfsguidance(uw_ctr)) >> 16;
-      double uwidth;
+      ufloat8 uwidth;
       
       
       if(ctx->uw_space_visited[uw_idx]) continue;
@@ -287,7 +287,7 @@ int r128_run_strategy(struct r128_ctx *ctx, char *strategy, int start, int len)
   if(ctx->flags & R128_FL_EREPORT)
     for(i = 0; i<len; i++)
       if(ctx->im[start + i].best_rc != R128_EC_SUCCESS)
-        r128_report_code(ctx, &ctx->im[start + i], NULL, 0); 
+        ctx->report_code(ctx, &ctx->im[start + i], ctx->report_code_arg, NULL, 0, 0, 0); 
 
   r128_log(ctx, R128_DEBUG2, "Giving up a batch strategy run, found %d of %d codes.\n", codes_found, codes_to_find);
   free(oalloc);

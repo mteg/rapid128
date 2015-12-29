@@ -25,7 +25,7 @@ int r128_cksum(u_int8_t *symbols, int len)
   return wsum % 103;
 }
 
-int r128_parse(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *symbols, int len)
+int r128_parse(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *symbols, int len, ufloat8 startsat, ufloat8 codewidth)
 {
   int table = 0, i;
   char outbuf[1024];
@@ -59,7 +59,7 @@ int r128_parse(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *symbols, 
     else if(c == 101 && table != 0)
       table = 0; /* CODE A */
     else if(c == 106)
-      return r128_report_code(ctx, img, outbuf, ppos);
+      return ctx->report_code(ctx, img, ctx->report_code_arg, outbuf, ppos, startsat, codewidth);
     else if(c < 0 && c > 105)
       nb = sprintf(outbuf + pos, " - ?? %d ?? - ", c); 
     else
@@ -70,29 +70,6 @@ int r128_parse(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *symbols, 
   return R128_EC_NOEND;
 }
 
-#define READBITS_NAME r128_read_bits_ltor
-#define r128_read_pixel(ctx, im, li, line, pos) (line[pos])
-#include "readbits.c"
-#undef READBITS_NAME
-#undef r128_read_pixel
-
-#define READBITS_NAME r128_read_bits_rtol
-#define r128_read_pixel(ctx, im, li, line, pos) (line[li->linesize - 1 - (pos)])
-#include "readbits.c"
-#undef READBITS_NAME
-#undef r128_read_pixel
-
-#define READBITS_NAME r128_read_bits_ttob
-#define r128_read_pixel(ctx, im, li, line, pos) (line[(pos) * im->width])
-#include "readbits.c"
-#undef READBITS_NAME
-#undef r128_read_pixel
-
-#define READBITS_NAME r128_read_bits_btot
-#define r128_read_pixel(ctx, im, li, line, pos) (line[(li->linesize - 1 - (pos)) * im->width])
-#include "readbits.c"
-#undef READBITS_NAME
-#undef r128_read_pixel
 
 void r128_update_best_code(struct r128_ctx *ctx, struct r128_image *im, u_int8_t *symbols, int len)
 {
@@ -113,7 +90,7 @@ int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_lin
 {
   int rc = R128_EC_NOEND;
   static ufloat8 weights[] = {256, 269, 243, 261, 251};
-  ufloat8 new_ppos;
+  ufloat8 new_ppos, start_ppos = ppos;
   int w = li->linesize;
   
   while(UF8_INTCEIL(ppos) < w) 
@@ -123,7 +100,7 @@ int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_lin
     
     for(i = 0; i<5; i++) 
     {
-      code = ctx->read_bits(ctx, img, li, ppos - uwidth, UF8_MUL(uwidth, weights[i]), UF8_MUL(threshold, weights[i]), 0, 0, 13, &new_ppos);
+      code = ctx->read_bits(ctx, img, li, ppos - uwidth, UF8_MUL(uwidth, weights[i]), UF8_MUL(threshold, weights[i]), 13, &new_ppos);
       cs = code_symbols[(code >> 2) & 0x1ff];
     
       if(!((code & 2) || (!(code & 1)) || (!(code & 0x800)) || (code & 0x1000) || cs == -1))
@@ -149,7 +126,7 @@ int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_lin
     {
       /* Proper STOP! */
       r128_update_best_code(ctx, img, ctx->codebuf, ctx->codepos);
-      return r128_parse(ctx, img, ctx->codebuf, ctx->codepos);
+      return r128_parse(ctx, img, ctx->codebuf, ctx->codepos, start_ppos, new_ppos - uwidth - start_ppos);
     }
     ppos = new_ppos - uwidth;
   }
@@ -169,21 +146,19 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
  */ 
   int rc = R128_EC_NOCODE;
   ufloat8 ppos = UF8_MUL(offset, uwidth), w = li->linesize;
-  
+  ufloat8 base_threshold = UF8_MUL(threshold, uwidth);
   if(!w) return R128_EC_NOLINE;
     
-  threshold = UF8_MUL(threshold, uwidth);
 //   *= 255.0 * uwidth;
 
   while(1)
   {
-    u_int32_t start_symbol = ctx->read_bits(ctx, im, li, ppos, uwidth, threshold,
-                      0x0d01, 0x3fc7, 65536, &ppos);
-    if(UF8_INTCEIL(ppos + 3 * 11 * uwidth) >= w) break; /* Nothing interesting found - start comes too late for a meaningful code! */
-    
-    start_symbol &= 0x3fff;
+    ufloat8 threshold = base_threshold;
+    u_int32_t start_symbol = ctx->find_bits(ctx, im, li, ppos, uwidth, &threshold, &ppos);
 
-    if(start_symbol == 0x0d09 || start_symbol == 0x0d21 || start_symbol == 0x0d39)
+    if(UF8_INTCEIL(ppos + 3 * 11 * uwidth) >= w) break; /* Nothing interesting found - start comes too late for a meaningful code! */    
+
+    if(start_symbol)
     {
       ctx->codepos = 0;
       ctx->codebuf[ctx->codepos++] = code_symbols[(start_symbol >> 2) & 0x1ff];
@@ -203,13 +178,3 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
 }
 
 
-void r128_configure_rotation(struct r128_ctx *ctx)
-{
-  switch(ctx->rotation)
-  {
-    default: ctx->read_bits = r128_read_bits_ltor; break;
-    case 1: ctx->read_bits = r128_read_bits_ttob; break;
-    case 2: ctx->read_bits = r128_read_bits_rtol; break;
-    case 3: ctx->read_bits = r128_read_bits_btot; break;
-  }
-}
