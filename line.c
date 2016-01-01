@@ -92,6 +92,7 @@ int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_lin
   static ufloat8 weights[] = {256, 269, 243, 261, 251};
   ufloat8 new_ppos, start_ppos = ppos;
   int w = li->linesize;
+  ctx->codepos = 0;
   
   while(UF8_INTCEIL(ppos) < w) 
   {
@@ -101,6 +102,7 @@ int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_lin
     for(i = 0; i<5; i++) 
     {
       code = ctx->read_bits(ctx, img, li, ppos - uwidth, UF8_MUL(uwidth, weights[i]), UF8_MUL(threshold, weights[i]), 13, &new_ppos);
+//      fprintf(stderr, "read_bits[%d] at uw = %.2f, th = %.2f yields %04x\n", ctx->codepos, UF8_FLOAT(uwidth), UF8_FLOAT(threshold), code);
       cs = code_symbols[(code >> 2) & 0x1ff];
     
       if(!((code & 2) || (!(code & 1)) || (!(code & 0x800)) || (code & 0x1000) || cs == -1))
@@ -134,7 +136,7 @@ int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_lin
   return rc;
 }
   
-int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 uwidth, ufloat8 offset, ufloat8 threshold)
+int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, u_int32_t norm_coeff, ufloat8 uwidth, ufloat8 offset)
 {
   
 /*
@@ -146,25 +148,20 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
  */ 
   int rc = R128_EC_NOCODE;
   ufloat8 ppos = UF8_MUL(offset, uwidth), w = li->linesize;
-  ufloat8 base_threshold = UF8_MUL(threshold, uwidth);
   if(!w) return R128_EC_NOLINE;
     
 //   *= 255.0 * uwidth;
 
   while(1)
   {
-    ufloat8 threshold = base_threshold;
-    u_int32_t start_symbol = ctx->find_bits(ctx, im, li, ppos, uwidth, &threshold, &ppos);
+    ufloat8 threshold = ctx->find_bits(ctx, im, li, ppos, uwidth, norm_coeff, &ppos);
 
     if(UF8_INTCEIL(ppos + 3 * 11 * uwidth) >= w) break; /* Nothing interesting found - start comes too late for a meaningful code! */    
 
-    if(start_symbol)
+    if(threshold)
     {
-      ctx->codepos = 0;
-      ctx->codebuf[ctx->codepos++] = code_symbols[(start_symbol >> 2) & 0x1ff];
-
       /* Perhaps we found a code! */
-      rc = minrc(rc, r128_read_code(ctx, im, li, ppos - uwidth, uwidth, threshold));
+      rc = minrc(rc, r128_read_code(ctx, im, li, ppos - uwidth * 12, uwidth, threshold * uwidth));
       /* Have we succeeded? */
       if(R128_ISDONE(ctx, rc)) 
         return rc;

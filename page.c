@@ -40,6 +40,7 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
   int min_ctr, max_ctr, ctr, lines_scanned = 0, rc = R128_EC_NOCODE;
   unsigned int t_start = r128_time(ctx), t_spent;
   int linemax;
+  u_int32_t norm_coeff;
   
   if(ctx->rotation & 1)
   {
@@ -63,6 +64,9 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
         ctx->page_scan_id, img->root ? "blurred " : "", img->root ? img->root->filename : img->filename,
         UF8_FLOAT(offset), UF8_FLOAT(ctx->threshold), minheight, maxheight, UF8_FLOAT(uwidth));
   
+  /* Compute normalization coefficient */
+  norm_coeff = 16 * 1024 / uwidth;
+  
   /* Do a BFS scan of page lines @ particular offset and unit width */
   for(ctr = min_ctr; ctr < max_ctr; ctr++)
   {
@@ -76,7 +80,7 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
     ctx->line_scan_status[line_idx] = ctx->page_scan_id;
 
     /* Check the line */
-    rc = minrc(rc, r128_scan_line(ctx, img, r128_get_line(ctx, img, line_idx, ctx->rotation), uwidth, offset, ctx->threshold));
+    rc = minrc(rc, r128_scan_line(ctx, img, r128_get_line(ctx, img, line_idx, ctx->rotation), norm_coeff, uwidth, offset));
     
     /* Increment scanned lines counter */
     lines_scanned ++;
