@@ -1,4 +1,6 @@
 #include <sys/types.h>
+#include <stdio.h>
+#include <string.h>
 #include "rapid128.h"
 
 #define READBITS_NAME r128_read_bits_ltor

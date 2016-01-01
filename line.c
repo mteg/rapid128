@@ -146,7 +146,7 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
  */ 
   int rc = R128_EC_NOCODE;
   ufloat8 ppos = UF8_MUL(offset, uwidth), w = li->linesize;
-  ufloat8 base_threshold = UF8_MUL(threshold, uwidth);
+  ufloat8 base_threshold = 128 * uwidth;
   if(!w) return R128_EC_NOLINE;
     
 //   *= 255.0 * uwidth;
@@ -156,7 +156,10 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
     ufloat8 threshold = base_threshold;
     u_int32_t start_symbol = ctx->find_bits(ctx, im, li, ppos, uwidth, &threshold, &ppos);
 
-    if(UF8_INTCEIL(ppos + 3 * 11 * uwidth) >= w) break; /* Nothing interesting found - start comes too late for a meaningful code! */    
+    if(UF8_INTCEIL(ppos + 3 * 11 * uwidth) >= w) {
+//      fprintf(stderr, "sorry, %d is too late (%d)\n", UF8_INTCEIL(ppos + 3 * 11 * uwidth), w);
+      break; /* Nothing interesting found - start comes too late for a meaningful code! */    
+    }
 
     if(start_symbol)
     {

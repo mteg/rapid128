@@ -5,16 +5,6 @@
     start_symbol == 0x0d09 || start_symbol == 0x0d21 || start_symbol == 0x0d39)
 */
 
-#define try_return(th, res) if((res & 0x3fc7) == 0x0d01) { \
-                          u_int32_t rres = res & 0x3fff; \
-                          if(rres == 0x0d09 || rres == 0x0d21 || rres == 0x0d39)  \
-                          {\
-                            *threshold = th >> 8; \
-                            if(curpos) \
-                              *curpos = npos; \
-                            return rres; \
-                          } \
-                          }
 
 #ifdef READBITS_NAME
 static u_int32_t READBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 ppos, 
@@ -32,23 +22,26 @@ static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, str
 #ifdef FINDBITS_NAME
   int read_limit = 65535;
 /* Thresholds: base, -50%, +50% */
-  ufloat8 th_m = (*threshold) << 8;
-  ufloat8 th_l = th_m >> 1;
-  ufloat8 th_h = th_m + th_l;
-/* Results */
-  u_int32_t res_m = 0;
-  u_int32_t res_l = 0;
-  u_int32_t res_h = 0;
+#define TH_STEPS 8
+  ufloat8 th_step = uwidth * (256 / TH_STEPS);
+  u_int32_t res[TH_STEPS];
+  ufloat8 ths[TH_STEPS];
+  int z;
+  memset(res, 0, sizeof(res));
+  ths[0] = th_step;
+  for(i = 1; i<TH_STEPS; i++)
+    ths[i] = ths[i - 1] + th_step;
+  
 #else
   u_int32_t res = 0;
-  
-  threshold <<= 8;
 #endif
+  
   
   
   for(i = 0; i<read_limit; i++)
   {
-    ufloat8 accu = 0, sppos;
+    int32_t accu = 0;
+    ufloat8 sppos;
     int pmin, pmax, j;
 
     npos = ppos + uwidth;
@@ -83,27 +76,27 @@ static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, str
 
     /* Ready for inputting the next bit */
 #ifdef FINDBITS_NAME
-    res_m <<= 1; res_h <<= 1; res_l <<= 1;
-    if(accu < th_l)
+    for(z = 0; z<(TH_STEPS - 1); z++)
     {
-      res_m |= 1;
-      res_h |= 1;
-      res_l |= 1;
-    }
-    else if(accu < th_m)
-    {
-      res_m |= 1;
-      res_h |= 1;
-    }
-    else if(accu < th_h)
-      res_h |= 1;
-    
-    try_return(th_h, res_h);
-    try_return(th_m, res_m);
-    try_return(th_l, res_l);
+      res[z] <<= 1;
+      if(accu < ths[z]) res[z] |= 1;
 
+      if((res[z] & 0x3fc7) == 0x0d01)
+      {
+        u_int32_t rres = res[z] & 0x3fff;
+        if(rres == 0x0d09 || rres == 0x0d21 || rres == 0x0d39)
+        {
+          if(curpos) *curpos = npos;
+          *threshold = th_step * (z + 1);
+//          fprintf(stderr, "GOTIT %04x th = %d\n", rres, *threshold);
+          return rres;
+        }
+      }
+    }
 #else
     res <<= 1;
+    
+//    fprintf(stderr, "accu = %d, th = %d\n", accu, threshold);
 
     /* Threshold! */
     if(accu < threshold) res |= 1;
@@ -117,6 +110,7 @@ static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, str
 #ifdef FINDBITS_NAME
   return 0;
 #else
+//  fprintf(stderr, "exit!\n");
   return res;
 #endif
 }
