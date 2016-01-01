@@ -70,7 +70,6 @@ struct r128_ctx
   ufloat8 *uwidth_space;
   u_int8_t *uw_space_visited;
 
-  ufloat8 threshold, def_threshold;
   int margin_low_threshold, margin_high_threshold;
   
   int min_len, max_gap;
@@ -101,7 +100,7 @@ struct r128_ctx
   u_int32_t (*read_bits)(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 ppos, 
                             ufloat8 uwidth, ufloat8 threshold, int read_limit, ufloat8 *curpos);
   u_int32_t (*find_bits)(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 ppos, 
-                            ufloat8 uwidth, ufloat8 *threshold, ufloat8 *curpos);
+                            ufloat8 uwidth, ufloat8 *threshold, ufloat8 *curpos, ufloat8 *ths);
   
   u_int8_t rotation, def_rotation, rgb_channel;
   
@@ -181,7 +180,7 @@ int r128_cksum(u_int8_t *symbols, int len);
 int r128_parse(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *symbols, int len, ufloat8 startsat, ufloat8 codewidth);
 void r128_update_best_code(struct r128_ctx *ctx, struct r128_image *im, u_int8_t *symbols, int len);
 
-int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 uwidth, ufloat8 offset, ufloat8 threshold);
+int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 uwidth, ufloat8 offset, ufloat8 *ths);
 void r128_configure_rotation(struct r128_ctx *ctx);
 
 int r128_parse_pgm(struct r128_ctx *c, struct r128_image *im, char *filename);
@@ -189,7 +188,7 @@ int r128_load_pgm(struct r128_ctx *c, struct r128_image *im, char *filename);
 int r128_load_file(struct r128_ctx *c, struct r128_image *im);
 
 void r128_realloc_buffers(struct r128_ctx *c);
-int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img, ufloat8 offset, ufloat8 uwidth, int minheight, int maxheight);
+int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img, ufloat8 offset, ufloat8 uwidth, int minheight, int maxheight, ufloat8 *ths);
 int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, int codes_to_find);
 int r128_run_strategy(struct r128_ctx *ctx, char *strategy, int start, int len);
 void r128_compute_uwidth_space(struct r128_ctx *ctx);

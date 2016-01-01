@@ -37,7 +37,6 @@ void r128_defaults(struct r128_ctx *c)
   c->strategy = "IHWO@0.6,iHWO,IHWo,iHWo,IHwO,iHwO,IHwo,iHwo,IhWO,ihWO,IhWo,ihWo,IhwO,ihwO,Ihwo,ihwo";
   c->min_uwidth = 230;	/* 0.9 */
   c->max_uwidth = 4 * 256;
-  c->def_threshold = 154;	/* 0.6 */
   c->margin_low_threshold = 20;
   c->margin_high_threshold = 235;
 /*
@@ -113,7 +112,6 @@ int r128_help(struct r128_ctx *ctx, const char *progname, int vb)
 
   printf("\n");
   printf("IMAGE INTERPRETATION\n");
-  printf(" -t <float> Threshold [%.2f].\n", UF8_FLOAT(ctx->def_threshold));
   printf(" -r         Codes are not horizontal and oriented left to right, but rather rotated by 90 degress clockwise (use twice/three times to indicate 180/270)\n");
   printf(" -ps        Assume codes are in parallel to shorter edges of images (ie. horizontal on portrait pages or vertical on landscape pages). Do not process images in tactics using rotations not matching this scheme (eg. skip processing 0 deg rotations for an image when its width > height).\n");
   printf(" -pl        Same, but assume codes are parallel to longer edges\n");
@@ -240,7 +238,7 @@ int r128_help(struct r128_ctx *ctx, const char *progname, int vb)
 int r128_getopt(struct r128_ctx *c, int argc, char ** argv)
 {
   int opt;
-  opt = getopt(argc, argv, "abcehilmnpqrvs:t:uwV");
+  opt = getopt(argc, argv, "abcehilmnpqrvs:uwV");
   if(opt == EOF) return EOF;
   switch(opt)
   {
@@ -328,9 +326,6 @@ int r128_getopt(struct r128_ctx *c, int argc, char ** argv)
       c->def_rotation = c->def_rotation % 4;
       break;
     case 's': assert((c->strategy = strdup(optarg))); break;
-    case 't':
-      c->def_threshold = ufloat8opt(c, "-t", optarg);
-      break;
     case 'u':
       switch((opt = getopt(argc, argv, "1:2:")))
       {

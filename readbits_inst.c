@@ -12,7 +12,7 @@ static u_int32_t READBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, str
                             int read_limit, ufloat8 *curpos)
 #else
 static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 ppos, 
-                            ufloat8 uwidth, ufloat8 *threshold, ufloat8 *curpos)
+                            ufloat8 uwidth, ufloat8 *threshold, ufloat8 *curpos, ufloat8 *ths)
 #endif
 
 {
@@ -22,15 +22,10 @@ static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, str
 #ifdef FINDBITS_NAME
   int read_limit = 65535;
 /* Thresholds: base, -50%, +50% */
-#define TH_STEPS 8
-  ufloat8 th_step = uwidth * (256 / TH_STEPS);
-  u_int32_t res[TH_STEPS];
-  ufloat8 ths[TH_STEPS];
+#define READBITS_TH_STEPS 8
+  u_int32_t res[READBITS_TH_STEPS];
   int z;
   memset(res, 0, sizeof(res));
-  ths[0] = th_step;
-  for(i = 1; i<TH_STEPS; i++)
-    ths[i] = ths[i - 1] + th_step;
   
 #else
   u_int32_t res = 0;
@@ -75,11 +70,13 @@ static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, str
 
     /* Ready for inputting the next bit */
 #ifdef FINDBITS_NAME
-    for(z = 0; z<(TH_STEPS - 1); z++)
-    {
-      res[z] <<= 1;
-      if(accu < ths[z]) res[z] |= 1;
+    for(z = 0; z<(READBITS_TH_STEPS - 1); z++)
+      res[z] = (res[z] << 1) | (accu < ths[z] ? 1 : 0);
 
+//    for(z = 0; z<(READBITS_TH_STEPS - 1); z++)
+//      if(accu < ths[z]) res[z] |= 1;
+
+    for(z = 0; z<(READBITS_TH_STEPS - 1); z++)
       if((res[z] & 0x3fc7) == 0x0d01)
       {
         u_int32_t rres = res[z] & 0x3fff;
@@ -91,7 +88,6 @@ static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, str
           return rres;
         }
       }
-    }
 #else
     res <<= 1;
     

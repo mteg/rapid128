@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <ctype.h>
 #include "rapid128.h"
+#include "readbits.h"
 
 static inline int log2_ceil(int val)
 {
@@ -35,7 +36,7 @@ void r128_realloc_buffers(struct r128_ctx *c)
 }
 
 int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
-          ufloat8 offset, ufloat8 uwidth, int minheight, int maxheight)
+          ufloat8 offset, ufloat8 uwidth, int minheight, int maxheight, ufloat8 *ths)
 {
   int min_ctr, max_ctr, ctr, lines_scanned = 0, rc = R128_EC_NOCODE;
   unsigned int t_start = r128_time(ctx), t_spent;
@@ -59,9 +60,9 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
   }
   
   ctx->page_scan_id++;
-  r128_log(ctx, R128_DEBUG1, "Page scan # %d of %simage %s starts: offs = %.3f, th = %.2f, heights = %d ~ %d, uwidth = %.2f\n", 
+  r128_log(ctx, R128_DEBUG1, "Page scan # %d of %simage %s starts: offs = %.3f, heights = %d ~ %d, uwidth = %.2f\n", 
         ctx->page_scan_id, img->root ? "blurred " : "", img->root ? img->root->filename : img->filename,
-        UF8_FLOAT(offset), UF8_FLOAT(ctx->threshold), minheight, maxheight, UF8_FLOAT(uwidth));
+        UF8_FLOAT(offset), minheight, maxheight, UF8_FLOAT(uwidth));
   
   /* Do a BFS scan of page lines @ particular offset and unit width */
   for(ctr = min_ctr; ctr < max_ctr; ctr++)
@@ -76,7 +77,7 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
     ctx->line_scan_status[line_idx] = ctx->page_scan_id;
 
     /* Check the line */
-    rc = minrc(rc, r128_scan_line(ctx, img, r128_get_line(ctx, img, line_idx, ctx->rotation), uwidth, offset, ctx->threshold));
+    rc = minrc(rc, r128_scan_line(ctx, img, r128_get_line(ctx, img, line_idx, ctx->rotation), uwidth, offset, ths));
     
     /* Increment scanned lines counter */
     lines_scanned ++;
@@ -84,8 +85,8 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
     /* If we found anything, maybe we can immediately quit? */
     if(R128_ISDONE(ctx, rc))
     {
-      r128_log(ctx, R128_NOTICE, "Code was found in page scan # %d, offs = %.3f, th = %.2f, heights = %d ~ %d, uwidth = %.2f, line = %d\n", 
-            ctx->page_scan_id, UF8_FLOAT(offset), UF8_FLOAT(ctx->threshold), minheight, maxheight, UF8_FLOAT(uwidth), line_idx);
+      r128_log(ctx, R128_NOTICE, "Code was found in page scan # %d, offs = %.3f, heights = %d ~ %d, uwidth = %.2f, line = %d\n", 
+            ctx->page_scan_id, UF8_FLOAT(offset),  minheight, maxheight, UF8_FLOAT(uwidth), line_idx);
       img->best_rc = rc;
       img->time_spent += (t_spent = r128_time(ctx) - t_start);
       if(img->root)
@@ -126,15 +127,6 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
   
   ctx->tactics = tactics;
 
-  if((param_input = strstr(tactics, "@")))
-  {
-    double th;
-    if(sscanf(param_input + 1, "%lf", &th) != 1)
-      r128_log(ctx, R128_NOTICE, "Invalid threshold in tactics: '%s', keeping to old threshold, equal %.2f.\n", tactics, UF8_FLOAT(ctx->threshold));
-    else
-      ctx->threshold = lrint(th * 256.0); 
-  }
-
   if((param_input = strstr(tactics, "/")))
   {
    ctx->rotation = 0; param_input++;
@@ -166,12 +158,19 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
       int i;
       int uw_idx = (ctx->uw_steps2 * bfsguidance(uw_ctr)) >> 16;
       ufloat8 uwidth;
-      
+      ufloat8 th_step;
+      ufloat8 ths[READBITS_TH_STEPS];      
       
       if(ctx->uw_space_visited[uw_idx]) continue;
       ctx->uw_space_visited[uw_idx] = 1;
 
       uwidth = ctx->uwidth_space[uw_idx];
+      th_step = uwidth * (256 / READBITS_TH_STEPS);
+
+      ths[0] = th_step;
+      for(i = 1; i<READBITS_TH_STEPS; i++)
+        ths[i] = ths[i - 1] + th_step;
+
       
       /* For all images */
       for(i = 0; i<len; i++)
@@ -214,7 +213,7 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
           }
         }
       
-        if(r128_page_scan(ctx, img, offsets[offs], uwidth, h_min, h_max) == R128_EC_SUCCESS)
+        if(r128_page_scan(ctx, img, offsets[offs], uwidth, h_min, h_max, ths) == R128_EC_SUCCESS)
         {
           codes_found++;
           if(!(ctx->flags & R128_FL_READALL))
@@ -260,7 +259,6 @@ int r128_run_strategy(struct r128_ctx *ctx, char *strategy, int start, int len)
      
      We take an extra margin and assume 6.
   */
-  ctx->threshold = ctx->def_threshold;
   ctx->rotation = ctx->def_rotation;
   
   ctx->min_len = UF8_INTFLOOR(4 * 13 * ctx->min_uwidth);
