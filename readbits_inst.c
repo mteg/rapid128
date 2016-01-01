@@ -37,7 +37,6 @@ static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, str
 #endif
   
   
-  
   for(i = 0; i<read_limit; i++)
   {
     int32_t accu = 0;
@@ -87,7 +86,7 @@ static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, str
         if(rres == 0x0d09 || rres == 0x0d21 || rres == 0x0d39)
         {
           if(curpos) *curpos = npos;
-          *threshold = th_step * (z + 1);
+          *threshold = ths[z];
 //          fprintf(stderr, "GOTIT %04x th = %d\n", rres, *threshold);
           return rres;
         }
