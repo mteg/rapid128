@@ -47,6 +47,7 @@ void r128_defaults(struct r128_ctx *c)
   c->temp_prefix = "r128temp";
   c->batch_size = 1;
   c->rgb_channel = 4;
+  c->fast_uwidth = INT_TO_UF8(100);
 
   c->codealloc = 128;
   c->codebuf = (u_int8_t*) r128_malloc(c, c->codealloc * sizeof(int));
@@ -95,6 +96,7 @@ int r128_help(struct r128_ctx *ctx, const char *progname, int vb)
   printf(" -s  <strg> Configure scanning strategy\n"); 
   printf(" -u1 <stpc> Unit width search step count (pass 1 - uppercase W) [%d]\n", ctx->uw_steps1);
   printf(" -u2 <stpc> Unit width search step count (pass 2 - lowercase w) [%d]\n", ctx->uw_steps2);
+  printf(" -uf <pix>  Use fast sampling (no averages) for unit widths larger than ... [%.1f]\n", ctx->fast_uwidth);
   if(vb == 2)
   {
     printf("Expected minimal height affects speed, but not detection. In first pass, rapid128 only"
@@ -327,10 +329,11 @@ int r128_getopt(struct r128_ctx *c, int argc, char ** argv)
       break;
     case 's': assert((c->strategy = strdup(optarg))); break;
     case 'u':
-      switch((opt = getopt(argc, argv, "1:2:")))
+      switch((opt = getopt(argc, argv, "1:2:f:")))
       {
         case '1': c->uw_steps1 = intopt(c, "-u1", optarg); break;
         case '2': c->uw_steps2 = intopt(c, "-u2", optarg); break;
+        case 'f': c->fast_uwidth = ufloat8opt(c, "-uf", optarg); break;
         default:  r128_fail(c, "Unknown option: -u%c\n", opt); break;
       }
       break;

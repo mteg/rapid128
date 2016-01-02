@@ -65,6 +65,7 @@ struct r128_ctx
   
   /* min/max code unit width to assume */
   ufloat8 min_uwidth, max_uwidth;
+  ufloat8 fast_uwidth;
   
   /* search space for unit width */
   ufloat8 *uwidth_space;

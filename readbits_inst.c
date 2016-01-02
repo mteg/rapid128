@@ -30,75 +30,113 @@ static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, str
 #else
   u_int32_t res = 0;
 #endif
-  
-  
-  for(i = 0; i<read_limit; i++)
-  {
-    int32_t accu = 0;
-    ufloat8 sppos;
-    int pmin, pmax, j;
 
-    npos = ppos + uwidth;
-    if(npos >= w) break;
-
-    sppos = UF8_CEIL(ppos);
-
-    if(sppos < npos)
-    {
-      /* Add remaining fraction */
-      accu += UF8_TOCEIL(ppos) * r128_read_pixel(ctx, im, li, line, UF8_INTFLOOR(ppos));
-      
-      /* Advance to next whole pixel */ 
-      ppos = sppos;
-      
-      /* Number of pixels to read and average */
-      pmin = UF8_INTFLOOR(ppos);
-      pmax = UF8_INTFLOOR(npos);
-      for(j = pmin; j<pmax; j++)
-        accu += INT_TO_UF8(r128_read_pixel(ctx, im, li, line, j));
-        
-      /* Add remaining fraction */
-      accu += UF8_FRAC(npos) * r128_read_pixel(ctx, im, li, line, UF8_INTFLOOR(npos));
-    }
-    else
-      accu += (npos - ppos) * r128_read_pixel(ctx, im, li, line, UF8_INTFLOOR(ppos));
-    
-
-#warning lets repair negative caps
-//    if(threshold < 0)
-//      accu *= -1;
-
-    /* Ready for inputting the next bit */
 #ifdef FINDBITS_NAME
-    for(z = 0; z<(READBITS_TH_STEPS - 1); z++)
-      res[z] = (res[z] << 1) | (accu < ths[z] ? 1 : 0);
+  if(uwidth >= ctx->fast_uwidth)
+  {    
+    for(i = 0; i<read_limit; i++)
+    {
+      ufloat8 accu;
 
-//    for(z = 0; z<(READBITS_TH_STEPS - 1); z++)
-//      if(accu < ths[z]) res[z] |= 1;
+      npos = ppos + uwidth;
+      if(unlikely(ppos >= w)) break;
+      accu = r128_read_pixel(ctx, im, li, line, UF8_INTFLOOR(ppos));
 
-    for(z = 0; z<(READBITS_TH_STEPS - 1); z++)
-      if((res[z] & 0x3fc7) == 0x0d01)
-      {
-        u_int32_t rres = res[z] & 0x3fff;
-        if(rres == 0x0d09 || rres == 0x0d21 || rres == 0x0d39)
+      /* Ready for inputting the next bit */
+      for(z = 0; z<(READBITS_TH_STEPS - 1); z++)
+        res[z] = (res[z] << 1) | ((accu - (z + 1) * (256 / READBITS_TH_STEPS)) >> 31);	// < ths[z] ? 1 : 0);
+
+  //    for(z = 0; z<(READBITS_TH_STEPS - 1); z++)
+  //      if(accu < ths[z]) res[z] |= 1;
+
+      for(z = 0; z<(READBITS_TH_STEPS - 1); z++)
+        if(unlikely((res[z] & 0x3fc7) == 0x0d01))
         {
-          if(curpos) *curpos = npos;
-          *threshold = ths[z];
-//          fprintf(stderr, "GOTIT %04x th = %d\n", rres, *threshold);
-          return rres;
+          u_int32_t rres = res[z] & 0x3fff;
+          if(rres == 0x0d09 || rres == 0x0d21 || rres == 0x0d39)
+          {
+            if(curpos) *curpos = npos;
+            *threshold = ths[z];
+            return rres;
+          }
         }
-      }
-#else
-    res <<= 1;
-    
-//    fprintf(stderr, "accu = %d, th = %d\n", accu, threshold);
 
-    /* Threshold! */
-    if(accu < threshold) res |= 1;
-#endif
-
-    ppos = npos;
+      ppos = npos;
+    }
   }
+  else
+#endif
+  {
+    
+    for(i = 0; i<read_limit; i++)
+    {
+      ufloat8 accu = 0;
+      ufloat8 sppos;
+      int pmin, pmax, j;
+
+      npos = ppos + uwidth;
+      if(unlikely(npos >= w)) break;
+
+      sppos = UF8_CEIL(ppos);
+
+      if(likely(sppos < npos))
+      {
+        /* Add remaining fraction */
+        accu += UF8_TOCEIL(ppos) * r128_read_pixel(ctx, im, li, line, UF8_INTFLOOR(ppos));
+        
+        /* Advance to next whole pixel */ 
+        ppos = sppos;
+        
+        /* Number of pixels to read and average */
+        pmin = UF8_INTFLOOR(ppos);
+        pmax = UF8_INTFLOOR(npos);
+        for(j = pmin; j<pmax; j++)
+          accu += INT_TO_UF8(r128_read_pixel(ctx, im, li, line, j));
+          
+        /* Add remaining fraction */
+        accu += UF8_FRAC(npos) * r128_read_pixel(ctx, im, li, line, UF8_INTFLOOR(npos));
+      }
+      else
+        accu += (npos - ppos) * r128_read_pixel(ctx, im, li, line, UF8_INTFLOOR(ppos));
+      
+
+  #warning lets repair negative caps
+  //    if(threshold < 0)
+  //      accu *= -1;
+
+      /* Ready for inputting the next bit */
+  #ifdef FINDBITS_NAME
+      for(z = 0; z<(READBITS_TH_STEPS - 1); z++)
+        res[z] = (res[z] << 1) | ((accu - ths[z]) >> 31);	// < ths[z] ? 1 : 0);
+
+  //    for(z = 0; z<(READBITS_TH_STEPS - 1); z++)
+  //      if(accu < ths[z]) res[z] |= 1;
+
+      for(z = 0; z<(READBITS_TH_STEPS - 1); z++)
+        if(unlikely((res[z] & 0x3fc7) == 0x0d01))
+        {
+          u_int32_t rres = res[z] & 0x3fff;
+          if(rres == 0x0d09 || rres == 0x0d21 || rres == 0x0d39)
+          {
+            if(curpos) *curpos = npos;
+            *threshold = ths[z];
+            return rres;
+          }
+        }
+  #else
+      res <<= 1;
+      
+      /* Threshold! */
+      if(accu < threshold) res |= 1;
+  #endif
+
+      ppos = npos;
+    }
+  }
+  
+  
+  
+  
   if(curpos)
     *curpos = npos;
   
