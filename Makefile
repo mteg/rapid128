@@ -1,5 +1,5 @@
 CC	= gcc 
-CFLAGS  = -O3 -Wall -D_GNU_SOURCE -funroll-loops
+CFLAGS  = -O3 -Wall -D_GNU_SOURCE -funroll-loops -DFLIP_CAPS 
 
 SOURCES	= infr.c line.c page.c loadpgm.c pgmimages.c codetree2.c codetabs.c readbits.c options.c
 OBJECTS	= ${SOURCES:.c=.o}

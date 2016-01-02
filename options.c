@@ -34,7 +34,7 @@ void r128_defaults(struct r128_ctx *c)
 {
   memset(c, 0, sizeof(struct r128_ctx));
   clock_gettime(CLOCK_MONOTONIC, &c->startup);
-  c->strategy = "IHWO@0.6,iHWO,IHWo,iHWo,IHwO,iHwO,IHwo,iHwo,IhWO,ihWO,IhWo,ihWo,IhwO,ihwO,Ihwo,ihwo";
+  c->strategy = "IHWO,iHWO,IHWo,iHWo,IHwO,iHwO,IHwo,iHwo,IhWO,ihWO,IhWo,ihWo,IhwO,ihwO,Ihwo,ihwo";
   c->min_uwidth = 230;	/* 0.9 */
   c->max_uwidth = 4 * 256;
   c->margin_low_threshold = 20;
@@ -96,7 +96,7 @@ int r128_help(struct r128_ctx *ctx, const char *progname, int vb)
   printf(" -s  <strg> Configure scanning strategy\n"); 
   printf(" -u1 <stpc> Unit width search step count (pass 1 - uppercase W) [%d]\n", ctx->uw_steps1);
   printf(" -u2 <stpc> Unit width search step count (pass 2 - lowercase w) [%d]\n", ctx->uw_steps2);
-  printf(" -uf <pix>  Use fast sampling (no averages) for unit widths larger than ... [%.1f]\n", ctx->fast_uwidth);
+  printf(" -uf <pix>  Use fast sampling (no averages) for unit widths of at least ... pixels [%.1f]\n", UF8_FLOAT(ctx->fast_uwidth));
   if(vb == 2)
   {
     printf("Expected minimal height affects speed, but not detection. In first pass, rapid128 only"
@@ -109,6 +109,10 @@ int r128_help(struct r128_ctx *ctx, const char *progname, int vb)
     printf("The -u1 and -u2 options define number of steps in which to guess the thinnest bar size. "
            "By default, they are computed to match -wa and -wb. You can alter (lower) the precomputed values to "
            "gain some speed at the cost of detection rate\n");
+    printf("Fast sampling takes only one sample per unit width of the code. This results in much less pixels processed "
+           "and faster operation when the tested unit width is significantly larger than 1. Without -uf, all pixels "
+           "of a line are processed, which is slower but improves detection of noisy codes. If your images are clean and you need speed,"
+           "start with -uf 2.\n");
     printf("Scanning strategies are explained at the end of this help.\n");
   }
 
@@ -120,23 +124,36 @@ int r128_help(struct r128_ctx *ctx, const char *progname, int vb)
   printf(" -ic R/G/B  Use only the indicated channel of RGB images\n");
   if(vb == 2)
   {
-    printf("By default, rapid128 only scans for codes placed horizontally, with normal left to right orientation. "
-           "Use -r to scan codes oriented from top to bottom (90 degree rotation), -rr to scan codes from pages rotated 180 degrees"
-           "or -rrr to scan codes rotated 270 degrees (bottom to top).\n"
-           "Note that rapid128 cheats in order to save time: rotations by 180 and 270 are implemented as flips of 0 and 90.\n"
+#ifdef FLIP_CAPS 
+    printf("Your rapid128 build was compiled with FLIP_CAPS, which means that by default, it scans for codes placed horizontally, trying both code directions: left to right and right to left. ");
+#else
+    printf("Your rapid128 build was compiled without FLIP_CAPS, and therefore by default it only scans for codes placed horizontally, with normal left to right direction. ");
+#endif
+    printf("Use -r to scan codes oriented from top to bottom (90 degree rotation), -rr to scan codes from pages rotated 180 degrees"
+           "or -rrr to scan codes rotated 270 degrees (bottom to top).\n");
+#ifdef FLIP_CAPS
+    printf("In case of your build -rr and -rrr do not make much sense and only imply a performance penalty (your rapid128 scans for flipped codes anyway).\n");
+#else
+    printf("Note that rapid128 cheats in order to save time: rotations by 180 and 270 are implemented as flips of 0 and 90.\n");
+
+#endif
+    printf(
+           "If you would like to scan various orientations in sequence, define your own scanning strategy "
+           "(-s). The -r option will then be applied only for first tactics, until instructions regarding rotation/orientation are found in the strategy.\n"
            "All processing in rapid128 takes place in grayscale. In case a P6 (RGB) image is provided as input, it will "
            "be reduced to grayscale first. The -ic option is used to select only one channel from RGB of images. "
            "For example, if you have scans of documents with handwritten signatures likely to be in blue pen, use -ic R or -ic G "
            "(channels other than blue) - this will improve detection of codes accidentaly overwritten by handwritten signatures.\n"
            "By default, RGB images are converted to grayscale by averaging all three channels (R + G + B) / 3.0. Note that "
-           "-ic does not affect processing grayscale or black-and-white inputs at all\n"
-           "Use -t to alter decision threshold for classifying pixels as black (1) or white (0). Use negative threshold for "
-           "inverted images. Use threshold larger than 0.5 for images that are a bit too white (fading toner etc) "
-           "and smaller than 0.5 for images that are a bit too black (after processing by a 'blackening' copy machine)\n"
-           "If you would like to scan various orientations and/or thresholds in sequence, define your own scanning strategy "
-           "(-s). The -t and -r options will then be applied only for first tactics, until instructions regarding rotation/orientation are found in the strategy.\n"
-           
-           );
+           "-ic does not affect processing grayscale or black-and-white inputs at all\n");
+    printf("Note that rapid128 uses as smart threshold detection algorithm: when it searches for a beginning of code, it tries "
+           " eight levels of thresholds: 32, 64, 96, ... 224. After a code start symbol is found, it continues processing assuming "
+           " the threshold the start symbol was detected with.\n"); 
+#ifdef NEGATIVE_CAPS
+    printf("Your build of rapid128 was compiled with NEGATIVE_CAPS enabled. It means it will automatically detect codes in inverted logic (negative images)\n");
+#else
+    printf("Your build of rapid128 was compiled without NEGATIVE_CAPS. It means it will not detect codes in inverted logic (negative images)\n");
+#endif         
   }
 
   printf("\n");
@@ -205,14 +222,14 @@ int r128_help(struct r128_ctx *ctx, const char *progname, int vb)
            "Rapid128 scans barcodes using a brute force approach. There are couple of variables "
            "that need to be guessed to successfuly read a barcode: (1) narrowest bar width, "
            "(2) vertical position of the code, (3) horizontal offset of the beginning of the barcode "
-           "(in fractions of bar width). "
-           "In order to speed up detection, configuration space for each of the three variables gets subdivided "
+           "(in fractions of bar width). (4) threshold "
+           "In order to speed up detection, configuration space for each of the three first variables gets subdivided "
            "into two parts: coarse and fine. Scanning strategy tells rapid128 which parts of the configuration "
            "space explore first. It usually makes a lot of sense to do a coarse brute force first in the first place: for example, "
            "coarse vertical position space consists of only 1/<expected_min_barcode_height> lines that are spaced "
            "apart vertically by <expected_min_barcode_height>. If we are dealing with a clean, undamaged scan, "
            "it is sufficient to analyze only this small percentage of lines - one of them will contain the code anyway.\n"
-           "Additionaly, scanning strategy can tell rapid128 to try different orientations of the image or thresholds.\n"
+           "Additionaly, scanning strategy can tell rapid128 to try different orientations of the code.\n"
            "Currently configured scanning strategy is: %s\n"
            "Scanning strategy consists of comma-separated search instructions, called 'tactics'. These instructions select "
            "parts of the complete configuration space to consider and are executed sequentially for every batch of images. "
@@ -221,14 +238,14 @@ int r128_help(struct r128_ctx *ctx, const char *progname, int vb)
            " H or h   Select coarse (-ch) or fine (every line) vertical position search.\n"
            " O or o   Select coarse (0, 0.5, 0.25, 0.75 times smallest bar width) or fine (every 1/8th) horizontal offset search.\n"
            " I or i   Use normal or vertically blurred image.\n"
-           "Additionally, it is possible to specify a threshold (eg. '@0.5') or rotation (eg. '/rr') by appending "
-           "extra tags at the end of configuration space selectors. The selected rotation or threshold holds " 
-           "for all subsequent tactics, until another rotation or threshold is configured.\n"
+           "Additionally, it is possible to specify code orientation (eg. '/rr') by appending "
+           "an extra tag at the end of configuration space selectors. The selected code orientation holds " 
+           "for all subsequent tactics, until another orientation is configured.\n"
            "Please note that 'o' and 'w' parts of the configuration space make sense only in "
            "case of very wide and (possibly) damaged codes (smallest bar more than 3 - 5 pixels).\n"
            "Please consider using the following strategies:\n"
-           "- default - for best detection of horizontal, left to right codes; worst speed\n"
-           "- IWHO,IWHO/r,IWhO/,IWhO/r  or similar - when not sure whether code will be horizontal or vertical (use rr and rrr for 180 and 270 guesses)\n"
+           "- default - for best detection of horizontal codes; worst speed\n"
+           "- IWHO,IWHO/r,IWhO/,IWhO/r  or similar - when not sure whether code will be horizontal or vertical\n"
            "- IWHO,IWhO,iWHO,iWhO   - for narrow codes, when speed is important and input material is of good quality\n"
            "- IWHO,IWhO   - when in need for very fast operation and not a lot of concern about undetected codes in low quality input.\n", ctx->strategy)  ;
   }

@@ -8,7 +8,8 @@
 
 #ifdef READBITS_NAME
 static u_int32_t READBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 ppos, 
-                            ufloat8 uwidth, ufloat8 threshold,
+                            ufloat8 uwidth, ufloat8 *threshold, ufloat8 th_weight,
+                            u_int8_t negative,
                             int read_limit, ufloat8 *curpos)
 #else
 static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 ppos, 
@@ -28,8 +29,19 @@ static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, str
   memset(res, 0, sizeof(res));
   
 #else
+  ufloat8 th = UF8_MUL(*threshold, th_weight);
+#ifdef SHADE_CAPS
+  ufloat8 pos = 0, neg = 0;
+  int pos_cnt = 0, neg_cnt = 0;
+#endif
+#ifdef NEGATIVE_CAPS
+  ufloat8 neg_max = 255 * uwidth;
+  if(negative) th = neg_max - th;
+#endif
   u_int32_t res = 0;
 #endif
+
+
 
 #ifdef FINDBITS_NAME
   if(uwidth >= ctx->fast_uwidth)
@@ -53,13 +65,23 @@ static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, str
         if(unlikely((res[z] & 0x3fc7) == 0x0d01))
         {
           u_int32_t rres = res[z] & 0x3fff;
-          if(rres == 0x0d09 || rres == 0x0d21 || rres == 0x0d39)
-          {
-            if(curpos) *curpos = npos;
-            *threshold = ths[z];
-            return rres;
-          }
+          if(rres == 0x0d09 || rres == 0x0d21 || rres == 0x0d39) findbits_return(rres)
         }
+  #ifdef NEGATIVE_CAPS
+        else if(unlikely((res[z] & 0x3fc7) == 0x32c6))
+        {
+          u_int32_t rres = res[z] & 0x3fff;
+          if(rres == 0x32f6 || rres == 0x32de || rres == 0x32c6) findbits_return(rres)
+        }
+  #endif
+  #ifdef FLIP_CAPS
+        else if(unlikely((res[z] & 0x3fff) == 0x05c6))
+          findbits_return(0x05c6)
+  #ifdef NEGATIVE_CAPS
+        else if(unlikely((res[z] & 0x3fff) == 0x3a39))
+          findbits_return(0x3a39)  
+  #endif
+  #endif 
 
       ppos = npos;
     }
@@ -100,7 +122,6 @@ static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, str
         accu += (npos - ppos) * r128_read_pixel(ctx, im, li, line, UF8_INTFLOOR(ppos));
       
 
-  #warning lets repair negative caps
   //    if(threshold < 0)
   //      accu *= -1;
 
@@ -116,18 +137,47 @@ static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, str
         if(unlikely((res[z] & 0x3fc7) == 0x0d01))
         {
           u_int32_t rres = res[z] & 0x3fff;
-          if(rres == 0x0d09 || rres == 0x0d21 || rres == 0x0d39)
-          {
-            if(curpos) *curpos = npos;
-            *threshold = ths[z];
-            return rres;
-          }
+          if(rres == 0x0d09 || rres == 0x0d21 || rres == 0x0d39) findbits_return(rres)
         }
+  #ifdef NEGATIVE_CAPS
+        else if(unlikely((res[z] & 0x3fc7) == 0x32c6))
+        {
+          u_int32_t rres = res[z] & 0x3fff;
+          if(rres == 0x32f6 || rres == 0x32de || rres == 0x32c6) findbits_return(rres)
+        }
+  #endif
+  #ifdef FLIP_CAPS
+        else if(unlikely((res[z] & 0x3fff) == 0x05c6))
+          findbits_return(0x05c6)
+  #ifdef NEGATIVE_CAPS
+        else if(unlikely((res[z] & 0x3fff) == 0x3a39))
+          findbits_return(0x3a39) 
+  #endif
+  #endif 
+
   #else
       res <<= 1;
       
+      #ifdef NEGATIVE_CAPS
+      if(negative) accu = neg_max - accu;
+      #endif
+      
       /* Threshold! */
-      if(accu < threshold) res |= 1;
+      if(accu < th)
+      {
+#ifdef SHADE_CAPS
+        neg += accu;
+        neg_cnt ++;
+#endif
+        res |= 1;
+      }
+#ifdef SHADE_CAPS
+      else
+      {
+        pos += accu;
+        pos_cnt ++;
+      }
+#endif
   #endif
 
       ppos = npos;
@@ -143,7 +193,14 @@ static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, str
 #ifdef FINDBITS_NAME
   return 0;
 #else
-//  fprintf(stderr, "exit!\n");
+#ifdef SHADE_CAPS
+  if(pos_cnt && neg_cnt)
+  {
+    pos = UF8_MUL(pos / pos_cnt, 65536 / th_weight);
+    neg = UF8_MUL(neg / neg_cnt, 65536 / th_weight);
+    *threshold = ((*threshold) * SHADE_CAPS + (pos + neg) / 2) / (SHADE_CAPS + 1);
+  }
+#endif
   return res;
 #endif
 }

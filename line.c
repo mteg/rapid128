@@ -86,7 +86,7 @@ void r128_update_best_code(struct r128_ctx *ctx, struct r128_image *im, u_int8_t
 }
 
 
-int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_line *li, ufloat8 ppos, ufloat8 uwidth, ufloat8 threshold)
+int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_line *li, ufloat8 ppos, ufloat8 uwidth, ufloat8 threshold, u_int8_t negative)
 {
   int rc = R128_EC_NOEND;
   static ufloat8 weights[] = {256, 269, 243, 261, 251};
@@ -100,11 +100,15 @@ int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_lin
     
     for(i = 0; i<5; i++) 
     {
-      code = ctx->read_bits(ctx, img, li, ppos - uwidth, UF8_MUL(uwidth, weights[i]), UF8_MUL(threshold, weights[i]), 13, &new_ppos);
+      ufloat8 cur_threshold = threshold;
+      code = ctx->read_bits(ctx, img, li, ppos - uwidth, UF8_MUL(uwidth, weights[i]), &cur_threshold, weights[i], negative, 13, &new_ppos);
       cs = code_symbols[(code >> 2) & 0x1ff];
     
       if(!((code & 2) || (!(code & 1)) || (!(code & 0x800)) || (code & 0x1000) || cs == -1))
+      {
+        threshold = cur_threshold;
         break;
+      }
     }
     
     if(i == 5)
@@ -134,7 +138,7 @@ int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_lin
   return rc;
 }
   
-int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 uwidth, ufloat8 offset, ufloat8 *ths)
+int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 uwidth, ufloat8 offset, ufloat8 *ths, u_int8_t no_recursion)
 {
   
 /*
@@ -162,18 +166,56 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
 
     if(start_symbol)
     {
+#ifdef NEGATIVE_CAPS
+      u_int8_t neg = (start_symbol & 0x3000) ? 1 : 0;
+      if(neg) start_symbol = (~start_symbol) & 0x3fff;
+#else
+      u_int8_t neg = 0;
+#endif 
+#ifdef FLIP_CAPS
+      if(start_symbol == 0x0d09 || start_symbol == 0x0d21 || start_symbol == 0x0d39)
+      {
+#endif
+
       ctx->codepos = 0;
       ctx->codebuf[ctx->codepos++] = code_symbols[(start_symbol >> 2) & 0x1ff];
 
       /* Perhaps we found a code! */
-      rc = minrc(rc, r128_read_code(ctx, im, li, ppos - uwidth, uwidth, threshold));
+      rc = minrc(rc, r128_read_code(ctx, im, li, ppos - uwidth, uwidth, threshold, neg));
       /* Have we succeeded? */
       if(R128_ISDONE(ctx, rc)) 
         return rc;
+#ifdef FLIP_CAPS
+      }
+      else if(!no_recursion)
+      {
+        static ufloat8 offsets[] = {0, 128, 64, 192, 32, 96, 160, 224};
+        int k;
+        /* Flip rotation */
+        ctx->rotation += 2; ctx->rotation &= 3; r128_configure_rotation(ctx);
+        
+        r128_log(ctx, R128_DEBUG2, "Performing extra flipped scan.\n");
+        /* Try all offsets */
+        for(k = 0; k<8; k++)
+        {
+          rc = minrc(rc, r128_scan_line(ctx, im, li, uwidth, offsets[k], ths, 1));
+         
+          /* Have we succeeded? */
+          if(R128_ISDONE(ctx, rc)) 
+          {
+            /* Revert to old rotation */
+            ctx->rotation += 2; ctx->rotation &= 3; r128_configure_rotation(ctx);
+            return rc;
+          }
+        }
+        /* Revert to old rotation */
+        ctx->rotation += 2; ctx->rotation &= 3; r128_configure_rotation(ctx);
+      }
+#endif
     }
     
-    /* Go back half a symbol and try again */
-    ppos -= uwidth * 6; 
+    /* Go back and try again */
+    ppos -= uwidth * 10;
   }
   
   return rc;

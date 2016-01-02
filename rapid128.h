@@ -99,7 +99,7 @@ struct r128_ctx
   unsigned int last_report; /* in ms */
   
   u_int32_t (*read_bits)(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 ppos, 
-                            ufloat8 uwidth, ufloat8 threshold, int read_limit, ufloat8 *curpos);
+                            ufloat8 uwidth, ufloat8 *threshold, ufloat8 th_weight, u_int8_t negative, int read_limit, ufloat8 *curpos);
   u_int32_t (*find_bits)(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 ppos, 
                             ufloat8 uwidth, ufloat8 *threshold, ufloat8 *curpos, ufloat8 *ths);
   
@@ -114,7 +114,7 @@ struct r128_ctx
 
 
 #define R128_EC_SUCCESS 0
-#define R128_EC_CHECKSUM 1 
+#define R128_EC_CHECKSUM 1
 #define R128_EC_SYNTAX 2
 #define R128_EC_NOEND 3
 #define R128_EC_NOCODE 4
@@ -181,7 +181,7 @@ int r128_cksum(u_int8_t *symbols, int len);
 int r128_parse(struct r128_ctx *ctx, struct r128_image *img, u_int8_t *symbols, int len, ufloat8 startsat, ufloat8 codewidth);
 void r128_update_best_code(struct r128_ctx *ctx, struct r128_image *im, u_int8_t *symbols, int len);
 
-int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 uwidth, ufloat8 offset, ufloat8 *ths);
+int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 uwidth, ufloat8 offset, ufloat8 *ths, u_int8_t no_recursion);
 void r128_configure_rotation(struct r128_ctx *ctx);
 
 int r128_parse_pgm(struct r128_ctx *c, struct r128_image *im, char *filename);
