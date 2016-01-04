@@ -46,7 +46,9 @@ struct r128_ctx
 #define R128_FL_BLUR_X 1024
 #define R128_FL_BLUR_SHORT 2048
 #define R128_FL_BLUR_LONG 4096
-
+#define R128_FL_RB_NEGATIVE 8192
+#define R128_FL_RB_ADAPTATIVE 16384
+#define R128_FL_RB_MASK (R128_FL_RB_NEGATIVE | R128_FL_RB_ADAPTATIVE)
   char *temp_prefix;
 
   struct timespec startup;
@@ -99,7 +101,8 @@ struct r128_ctx
   unsigned int last_report; /* in ms */
   
   u_int32_t (*read_bits)(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 ppos, 
-                            ufloat8 uwidth, ufloat8 *threshold, ufloat8 th_weight, u_int8_t negative, int read_limit, ufloat8 *curpos);
+                            ufloat8 uwidth, ufloat8 threshold, ufloat8 th_weight, int read_limit, ufloat8 *curpos);
+                      
   u_int32_t (*find_bits)(struct r128_ctx *ctx, struct r128_image *im, struct r128_line *li, ufloat8 ppos, 
                             ufloat8 uwidth, ufloat8 *threshold, ufloat8 *curpos, ufloat8 *ths);
   
@@ -110,6 +113,8 @@ struct r128_ctx
 
   int (*report_code)(struct r128_ctx *, struct r128_image *, void *, char *, int, ufloat8, ufloat8);
   void *report_code_arg;
+  
+  ufloat8 symbol_goodness;
 };
 
 

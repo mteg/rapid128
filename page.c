@@ -320,11 +320,9 @@ void r128_compute_uwidth_space(struct r128_ctx *ctx)
   }
   else
   {
-#warning still needs to be repaired
-    assert(0);
-/*    double delta = pow(ctx->max_uwidth / ctx->min_uwidth, 1.0 / ((double) ctx->uw_steps2));
+    double delta = pow(UF8_FLOAT(ctx->max_uwidth) / UF8_FLOAT(ctx->min_uwidth), 1.0 / ((double) ctx->uw_steps2));
     for(i = 0; i<uws_alloc; i++, uw *= delta)
-      ctx->uwidth_space[i] = uw;*/
+      ctx->uwidth_space[i] = uw;
   }
   if(!ctx->uw_steps1) ctx->uw_steps1 = ctx->uw_steps2;
   

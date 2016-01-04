@@ -6,6 +6,7 @@ typedef u_int32_t ufloat8;
 #define UF8_INTFLOOR(x) ((x) >> 8)
 #define UF8_INTCEIL(x) (UF8_INTFLOOR(x) + ((UF8_FRAC(x) == 0) ? 0 : 1))
 #define INT_TO_UF8(x) ((x) << 8)
+#define FLOAT_TO_UF8(x) (lrint((x) * 256.0))
 #define UF8_CEIL(x)  INT_TO_UF8(UF8_INTCEIL(x))
 #define UF8_MUL(x, y) (((x) * (y)) >> 8)
 #define UF8_FLOAT(x) (((double) x) / 256.0)

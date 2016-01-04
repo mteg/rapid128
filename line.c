@@ -86,37 +86,83 @@ void r128_update_best_code(struct r128_ctx *ctx, struct r128_image *im, u_int8_t
 }
 
 
-int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_line *li, ufloat8 ppos, ufloat8 uwidth, ufloat8 threshold, u_int8_t negative)
+int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_line *li, ufloat8 ppos, ufloat8 uwidth, ufloat8 threshold)
 {
   int rc = R128_EC_NOEND;
-  static ufloat8 weights[] = {256, 269, 243, 261, 251};
+  static ufloat8 uwidth_weights[] = {256, 269, 243, 261, 251};
   ufloat8 new_ppos, start_ppos = ppos;
   int w = li->linesize;
+#ifdef SHADE_CAPS
+  ufloat8 best_goodness;
+  ufloat8 th_offsets[] = {0, 32, -32};
+  ufloat8 uw_offsets[] = {0, 32, -32};
+#endif
   
   while(UF8_INTCEIL(ppos) < w) 
   {
-    int cs, i;
+    int cs = -1, uw_w;
     u_int32_t code;
+#ifdef SHADE_CAPS   
+    int th_o, uw_o;
+    ufloat8 best_threshold = 0;
     
-    for(i = 0; i<5; i++) 
+    if(ctx->flags & R128_FL_RB_ADAPTATIVE)
+    /* Find next symbol the adaptative way */
     {
-      ufloat8 cur_threshold = threshold;
-      code = ctx->read_bits(ctx, img, li, ppos - uwidth, UF8_MUL(uwidth, weights[i]), &cur_threshold, weights[i], negative, 13, &new_ppos);
-      cs = code_symbols[(code >> 2) & 0x1ff];
-    
-      if(!((code & 2) || (!(code & 1)) || (!(code & 0x800)) || (code & 0x1000) || cs == -1))
+      /* Find best goodness in 45 tries */
+      best_goodness = 0;
+      for(uw_w = 0; uw_w < 5; uw_w++)
       {
-        threshold = cur_threshold;
-        break;
+        ufloat8 this_uwidth = UF8_MUL(uwidth, uwidth_weights[uw_w]);
+        for(th_o = 0; th_o < 3; th_o++)
+        {
+          ufloat8 this_threshold = threshold + th_offsets[th_o] * this_uwidth;
+          if(this_threshold >= (this_uwidth * 256)) continue;
+          for(uw_o = 0; uw_o<3; uw_o++)
+          {
+            int this_offset = UF8_MUL(uw_offsets[uw_o], this_uwidth);
+            int this_cs;
+            ufloat8 this_new_ppos;
+
+            code = ctx->read_bits(ctx, img, li, ppos - uwidth + this_offset, this_uwidth, this_threshold, uwidth_weights[uw_w],  13, &this_new_ppos);
+            this_cs = code_symbols[(code >> 2) & 0x1ff];      
+            
+            /* Wrong code, perhaps? */
+            if(((code & 2) || (!(code & 1)) || (!(code & 0x800)) || (code & 0x1000) || this_cs == -1)) continue;
+            
+            /* Everything OK, let's check goodness. */
+            if(ctx->symbol_goodness > best_goodness)
+            {
+              best_goodness = ctx->symbol_goodness;
+              best_threshold = this_threshold;
+              new_ppos = this_new_ppos;
+              cs = this_cs;
+            }
+          }
+        }
+      }
+      threshold = best_threshold;
+    }
+    else
+#endif
+    /* Find next symbol the hard way */
+    {
+      for(uw_w = 0; uw_w<5; uw_w++) 
+      {
+        code = ctx->read_bits(ctx, img, li, ppos - uwidth, UF8_MUL(uwidth, uwidth_weights[uw_w]), threshold, uwidth_weights[uw_w],  13, &new_ppos);
+        cs = code_symbols[(code >> 2) & 0x1ff];
+        if(!((code & 2) || (!(code & 1)) || (!(code & 0x800)) || (code & 0x1000) || cs == -1))
+          goto got_valid_symbol;
       }
     }
     
-    if(i == 5)
+    if(cs == -1)
     {
-        r128_update_best_code(ctx, img, ctx->codebuf, ctx->codepos);
-        return R128_EC_SYNTAX; 
+      r128_update_best_code(ctx, img, ctx->codebuf, ctx->codepos);
+      return R128_EC_SYNTAX; 
     }
-    
+
+got_valid_symbol:
     ctx->codebuf[ctx->codepos++] = cs;
     
     /* Perhaps we need to extend the code */
@@ -167,10 +213,10 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
     if(start_symbol)
     {
 #ifdef NEGATIVE_CAPS
-      u_int8_t neg = (start_symbol & 0x3000) ? 1 : 0;
-      if(neg) start_symbol = (~start_symbol) & 0x3fff;
+      int fl = (start_symbol & 0x3000) ? R128_FL_RB_NEGATIVE : 0;
+      if(fl) start_symbol = (~start_symbol) & 0x3fff;
 #else
-      u_int8_t neg = 0;
+      int fl = 0;
 #endif 
 #ifdef FLIP_CAPS
       if(start_symbol == 0x0d09 || start_symbol == 0x0d21 || start_symbol == 0x0d39)
@@ -180,11 +226,24 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
       ctx->codepos = 0;
       ctx->codebuf[ctx->codepos++] = code_symbols[(start_symbol >> 2) & 0x1ff];
 
+      ctx->flags = (ctx->flags & ~R128_FL_RB_MASK) | fl;
       /* Perhaps we found a code! */
-      rc = minrc(rc, r128_read_code(ctx, im, li, ppos - uwidth, uwidth, threshold, neg));
+      rc = minrc(rc, r128_read_code(ctx, im, li, ppos - uwidth, uwidth, threshold));
       /* Have we succeeded? */
       if(R128_ISDONE(ctx, rc)) 
         return rc;
+#ifdef SHADE_CAPS
+      else if((rc != R128_EC_SUCCESS) && (rc <= R128_EC_NOEND))
+      {
+        /* Turn on shade caps? */
+        ctx->codepos = 1;
+        ctx->flags |= R128_FL_RB_ADAPTATIVE;
+        rc = minrc(rc, r128_read_code(ctx, im, li, ppos - uwidth, uwidth, threshold));
+        /* Have we succeeded? */
+        if(R128_ISDONE(ctx, rc)) 
+          return rc;
+      }
+#endif
 #ifdef FLIP_CAPS
       }
       else if(!no_recursion)
