@@ -75,7 +75,10 @@ int r128_page_scan(struct r128_ctx *ctx, struct r128_image *img,
     
     /* Mark line as checked */
     ctx->line_scan_status[line_idx] = ctx->page_scan_id;
-
+    
+    /* Mark current line for code reporting */
+    ctx->current_line = line_idx;
+    
     /* Check the line */
     rc = minrc(rc, r128_scan_line(ctx, img, r128_get_line(ctx, img, line_idx, ctx->rotation), uwidth, offset, ths, 0));
     

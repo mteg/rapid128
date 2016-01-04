@@ -54,7 +54,7 @@ struct r128_ctx
   struct timespec startup;
   
   int logging_level;
-  int page_scan_id;
+  int page_scan_id, current_line;
 
   int first_temp, last_temp;
   int n_images, n_codes_found;

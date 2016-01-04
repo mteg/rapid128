@@ -94,7 +94,7 @@ int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_lin
   int w = li->linesize;
 #ifdef SHADE_CAPS
   ufloat8 best_goodness;
-  ufloat8 th_offsets[] = {0, 32, -32};
+  ufloat8 th_offsets[] = {0, 16, -16};
   ufloat8 uw_offsets[] = {0, 32, -32};
 #endif
   

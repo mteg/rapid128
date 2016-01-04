@@ -88,9 +88,10 @@ int r128_report_code(struct r128_ctx *ctx, struct r128_image *img, void *own_dat
   if(ctx->flags & R128_FL_EREPORT)
   {
     int i;
-    printf("%s:%d.%03d:%s:%s:%.1f:%.1f", img->root ? img->root->filename : img->filename,
+    printf("%s:%d.%03d:%s:%s:%d:%.1f:%d:%.1f", img->root ? img->root->filename : img->filename,
       img->time_spent / 1000, img->time_spent % 1000, code ? ctx->tactics : "", r128_strerror(img->best_rc),
-      UF8_FLOAT(startsat), UF8_FLOAT(codewidth));
+      code ? (ctx->rotation * 90) : 0, 
+      UF8_FLOAT(startsat), code ? ctx->current_line : 0, UF8_FLOAT(codewidth));
     for(i = 0; i<img->bestcode_len; i++)
       printf("%c%d", i ? ' ' : ':', img->bestcode[i]);
     printf(":");
