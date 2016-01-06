@@ -156,6 +156,8 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
   memset(ctx->uw_space_visited, 0, ctx->uw_steps2);
 
   for(offs = offs_min; offs < offs_max && (codes_found < codes_to_find || (ctx->flags & R128_FL_READALL)); offs++)
+  {
+    memset(ctx->uw_space_visited, 0, ctx->uw_steps2);
     for(uw_ctr = min_uw_ctr; uw_ctr < max_uw_ctr; uw_ctr++)
     {
       int i;
@@ -232,6 +234,7 @@ int r128_try_tactics(struct r128_ctx *ctx, char *tactics, int start, int len, in
        if(!(ctx->flags & R128_FL_READALL)) 
         break;
     }
+  }
   
   r128_log(ctx, R128_DEBUG2, "Finishing tactics '%s': %d of %d codes found\n", tactics, codes_found, codes_to_find);
   return codes_found;

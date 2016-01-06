@@ -149,10 +149,14 @@ int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_lin
     {
       for(uw_w = 0; uw_w<5; uw_w++) 
       {
-        code = ctx->read_bits(ctx, img, li, ppos - uwidth, UF8_MUL(uwidth, uwidth_weights[uw_w]), threshold, uwidth_weights[uw_w],  13, &new_ppos);
-        cs = code_symbols[(code >> 2) & 0x1ff];
-        if(!((code & 2) || (!(code & 1)) || (!(code & 0x800)) || (code & 0x1000) || cs == -1))
+        int this_cs;
+        code = ctx->read_bits(ctx, img, li, ppos - uwidth, UF8_MUL(uwidth, uwidth_weights[uw_w]), threshold, uwidth_weights[uw_w], 13, &new_ppos);
+        this_cs = code_symbols[(code >> 2) & 0x1ff];
+        if(!((code & 2) || (!(code & 1)) || (!(code & 0x800)) || (code & 0x1000) || this_cs == -1))
+        {
+          cs = this_cs;
           goto got_valid_symbol;
+        }
       }
     }
     
@@ -227,8 +231,10 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
       ctx->codebuf[ctx->codepos++] = code_symbols[(start_symbol >> 2) & 0x1ff];
 
       ctx->flags = (ctx->flags & ~R128_FL_RB_MASK) | fl;
+      
       /* Perhaps we found a code! */
       rc = minrc(rc, r128_read_code(ctx, im, li, ppos - uwidth, uwidth, threshold));
+
       /* Have we succeeded? */
       if(R128_ISDONE(ctx, rc)) 
         return rc;
@@ -253,7 +259,7 @@ int r128_scan_line(struct r128_ctx *ctx, struct r128_image *im, struct r128_line
         /* Flip rotation */
         ctx->rotation += 2; ctx->rotation &= 3; r128_configure_rotation(ctx);
         
-        r128_log(ctx, R128_DEBUG2, "Performing extra flipped scan.\n");
+        r128_log(ctx, R128_DEBUG2, "Performing extra flipped scan at rot %d.\n", ctx->rotation);
         /* Try all offsets */
         for(k = 0; k<8; k++)
         {
