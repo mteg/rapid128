@@ -94,8 +94,8 @@ int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_lin
   int w = li->linesize;
 #ifdef SHADE_CAPS
   ufloat8 best_goodness;
-  ufloat8 th_offsets[] = {0, 16, -16};
-  ufloat8 uw_offsets[] = {0, 32, -32};
+  int32_t th_offsets[] = {0, 16, -16};
+  int32_t uw_offsets[] = {0, 32, -32};
 #endif
   
   while(UF8_INTCEIL(ppos) < w) 
@@ -120,7 +120,7 @@ int r128_read_code(struct r128_ctx *ctx, struct r128_image *img, struct r128_lin
           if(this_threshold >= (this_uwidth * 256)) continue;
           for(uw_o = 0; uw_o<3; uw_o++)
           {
-            int this_offset = UF8_MUL(uw_offsets[uw_o], this_uwidth);
+            int32_t this_offset = UF8_MUL(uw_offsets[uw_o], (int) this_uwidth);
             int this_cs;
             ufloat8 this_new_ppos;
 

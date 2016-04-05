@@ -121,6 +121,8 @@ static u_int32_t FINDBITS_NAME (struct r128_ctx *ctx, struct r128_image *im, str
       }
       else
         accu += (npos - ppos) * r128_read_pixel(ctx, im, li, line, UF8_INTFLOOR(ppos));
+
+//      fprintf(stderr, "@ %d = %d\n", ppos, accu);
       
 
   //    if(threshold < 0)
